@@ -13,6 +13,12 @@ local state = {
 local outBias = nil
 local outTradeDay = nil
 
+local function dbg(msg)
+    if instance.parameters.debugMode then
+        core.host:trace(NAME .. " | " .. msg)
+    end
+end
+
 local function dayKeyFromTime(t)
     local d = core.dateToTable(t)
     return string.format("%04d-%02d-%02d", d.year, d.month, d.day)
@@ -27,6 +33,9 @@ function Init()
     indicator.parameters:addGroup("Core")
     indicator.parameters:addInteger("dayMoveAtrLen", "Day Move ATR Length", 14, 2, 100)
     indicator.parameters:addDouble("dumpPumpMinAtrMult", "Dump/Pump Min ATR Mult", 1.0, 0.1, 5.0)
+
+    indicator.parameters:addGroup("Debug")
+    indicator.parameters:addBoolean("debugMode", "Debug Mode", false)
 end
 
 function Prepare(nameOnly)
@@ -57,4 +66,15 @@ function Update(period, mode)
     -- TODO: migrate complete FRD/FGD classification logic from monolith.
     outBias[period] = state.bias
     outTradeDay[period] = state.isTradeDay and 1 or 0
+end
+
+function AsyncOperationFinished(cookie, success, message, message1, message2)
+    -- Intentionally empty: this skeleton currently does not use async history requests.
+    dbg(string.format("AsyncOperationFinished(cookie=%s, success=%s)", tostring(cookie), tostring(success)))
+end
+
+function ReleaseInstance()
+    outBias = nil
+    outTradeDay = nil
+    source = nil
 end

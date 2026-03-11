@@ -20,6 +20,12 @@ local outBlue2 = nil
 local outBlue3 = nil
 local outScore = nil
 
+local function dbg(msg)
+    if instance.parameters.debugMode then
+        core.host:trace(NAME .. " | " .. msg)
+    end
+end
+
 function Init()
     indicator:name(NAME)
     indicator:description("Skeleton: retest / Blue signal / score gating")
@@ -30,6 +36,9 @@ function Init()
     indicator.parameters:addInteger("entryExpireMinutes", "Entry Expire Minutes", 45, 1, 300)
     indicator.parameters:addBoolean("scoreEnabled", "Score Enabled", true)
     indicator.parameters:addInteger("minScoreToDisplay", "Min Score To Display", 0, 0, 100)
+
+    indicator.parameters:addGroup("Debug")
+    indicator.parameters:addBoolean("debugMode", "Debug Mode", false)
 end
 
 function Prepare(nameOnly)
@@ -60,4 +69,19 @@ function Update(period, mode)
     outBlue2[period] = state.blue2 and 1 or 0
     outBlue3[period] = state.blue3 and source.close[period] or nil
     outScore[period] = state.score
+end
+
+function AsyncOperationFinished(cookie, success, message, message1, message2)
+    -- Intentionally empty: this skeleton currently does not use async history requests.
+    dbg(string.format("AsyncOperationFinished(cookie=%s, success=%s)", tostring(cookie), tostring(success)))
+end
+
+function ReleaseInstance()
+    outRetU = nil
+    outRetL = nil
+    outBlue1 = nil
+    outBlue2 = nil
+    outBlue3 = nil
+    outScore = nil
+    source = nil
 end
