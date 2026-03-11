@@ -57,6 +57,15 @@ function Init()
 
     indicator.parameters:addGroup("Sessions")
     indicator.parameters:addString("asiaSession", "Asia Session", "2000-0000")
+
+    indicator.parameters:addGroup("Debug")
+    indicator.parameters:addBoolean("debugMode", "Debug Mode", false)
+end
+
+local function dbg(msg)
+    if instance.parameters.debugMode then
+        core.host:trace(NAME .. " | " .. msg)
+    end
 end
 
 function Prepare(nameOnly)
@@ -94,4 +103,18 @@ function Update(period, mode)
     outBos[period] = state.bosLevel
     outFvgU[period] = state.fvgUpper
     outFvgL[period] = state.fvgLower
+end
+
+function AsyncOperationFinished(cookie, success, message, message1, message2)
+    -- Intentionally empty: this skeleton currently does not use async history requests.
+    dbg(string.format("AsyncOperationFinished(cookie=%s, success=%s)", tostring(cookie), tostring(success)))
+end
+
+function ReleaseInstance()
+    outAsiaH = nil
+    outAsiaL = nil
+    outBos = nil
+    outFvgU = nil
+    outFvgL = nil
+    source = nil
 end

@@ -18,6 +18,12 @@ local outSL = nil
 local outDailyTrades = nil
 local outBlocked = nil
 
+local function dbg(msg)
+    if instance.parameters.debugMode then
+        core.host:trace(NAME .. " | " .. msg)
+    end
+end
+
 function Init()
     indicator:name(NAME)
     indicator:description("Skeleton: trade line and HUD stream manager")
@@ -30,6 +36,9 @@ function Init()
 
     indicator.parameters:addGroup("HUD")
     indicator.parameters:addInteger("dailyMaxTrades", "Daily Max Trades", 2, 1, 20)
+
+    indicator.parameters:addGroup("Debug")
+    indicator.parameters:addBoolean("debugMode", "Debug Mode", false)
 end
 
 function Prepare(nameOnly)
@@ -60,4 +69,18 @@ function Update(period, mode)
     outSL[period] = state.stopLoss
     outDailyTrades[period] = state.dailyTrades
     outBlocked[period] = state.blocked and 1 or 0
+end
+
+function AsyncOperationFinished(cookie, success, message, message1, message2)
+    -- Intentionally empty: this skeleton currently does not use async history requests.
+    dbg(string.format("AsyncOperationFinished(cookie=%s, success=%s)", tostring(cookie), tostring(success)))
+end
+
+function ReleaseInstance()
+    outEntry = nil
+    outTP = nil
+    outSL = nil
+    outDailyTrades = nil
+    outBlocked = nil
+    source = nil
 end
