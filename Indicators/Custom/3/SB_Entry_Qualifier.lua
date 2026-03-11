@@ -348,6 +348,11 @@ function Prepare(nameOnly)
     S.bosDir = nil
     S.bosLevel = nil
     S.bosTime = nil
+    S.bosValidMinutes = 180
+    S.lastPivotHigh = nil
+    S.lastPivotLow = nil
+    S.lastPivotHighTime = nil
+    S.lastPivotLowTime = nil
     S.fvgUpper = nil
     S.fvgLower = nil
     S.fvgMid = nil
@@ -494,6 +499,84 @@ local function resetFvg(waitState)
     if waitState ~= nil then
         S.state = waitState
     end
+end
+
+-- minimal BOS prerequisite for entry qualifier ------------------------------
+-- This block only provides the minimum BOS payload needed by entry filters:
+--   * direction  : S.bosDir
+--   * key level  : S.bosLevel
+--   * trigger ts : S.bosTime
+--
+-- Replaceable sync point:
+-- If an external structure engine is introduced later, replace this function
+-- with a state-sync adapter that writes the same three fields.
+local function updateMinimalBos(period)
+    local nowTs = source:date(period)
+    local m15Index = locateHistoryIndex(H.m15, nowTs)
+    if m15Index == nil then
+        S.bosDir = nil
+        S.bosLevel = nil
+        S.bosTime = nil
+        S.blockedReason = "bos_unavailable"
+        resetFvg(WAITFVG)
+        return false
+    end
+
+    local pivotIndex = m15Index - 2
+    if pivotIndex >= (H.m15:first() + 2) then
+        local ph = pivotHigh(H.m15, pivotIndex, 2, 2)
+        if ph ~= nil then
+            S.lastPivotHigh = ph
+            S.lastPivotHighTime = H.m15:date(pivotIndex)
+        end
+
+        local pl = pivotLow(H.m15, pivotIndex, 2, 2)
+        if pl ~= nil then
+            S.lastPivotLow = pl
+            S.lastPivotLowTime = H.m15:date(pivotIndex)
+        end
+    end
+
+    local breakIndex = m15Index - 1
+    if breakIndex >= H.m15:first() then
+        local c = H.m15.close[breakIndex]
+        local breakTs = H.m15:date(breakIndex)
+        if c ~= nil and breakTs ~= nil then
+            if S.lastPivotHigh ~= nil and S.lastPivotHighTime ~= nil and breakTs >= S.lastPivotHighTime and c > S.lastPivotHigh then
+                S.bosDir = 1
+                S.bosLevel = S.lastPivotHigh
+                S.bosTime = breakTs
+            elseif S.lastPivotLow ~= nil and S.lastPivotLowTime ~= nil and breakTs >= S.lastPivotLowTime and c < S.lastPivotLow then
+                S.bosDir = -1
+                S.bosLevel = S.lastPivotLow
+                S.bosTime = breakTs
+            end
+        end
+    end
+
+    if S.bosTime ~= nil and S.bosValidMinutes ~= nil and S.bosValidMinutes > 0 then
+        local expireTs = S.bosTime + (S.bosValidMinutes / 1440)
+        if nowTs > expireTs then
+            S.bosDir = nil
+            S.bosLevel = nil
+            S.bosTime = nil
+            S.blockedReason = "bos_expired"
+            resetFvg(WAITFVG)
+            return false
+        end
+    end
+
+    if S.bosDir == nil or S.bosLevel == nil or S.bosTime == nil then
+        S.blockedReason = "bos_invalid"
+        resetFvg(WAITFVG)
+        return false
+    end
+
+    if S.blockedReason == "bos_unavailable" or S.blockedReason == "bos_expired" or S.blockedReason == "bos_invalid" then
+        S.blockedReason = nil
+    end
+
+    return true
 end
 
 local function updateFvg(period)
@@ -721,6 +804,12 @@ function Update(period, mode)
 
     if S.state == IDLE then
         S.state = WAITFVG
+    end
+
+    local bosReady = updateMinimalBos(period)
+    if not bosReady then
+        writeEntryStreams(period)
+        return
     end
 
     updateFvg(period)
