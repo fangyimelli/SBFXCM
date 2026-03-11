@@ -31,3 +31,9 @@
 - 實作 Focus mode（`focusdate` + NY 09:30 anchor）與 debug stream。
 - 實作 DayType bias（FGD/FRD/TradeDay）與核心狀態機：Asia->Sweep->BOS->FVG->Retest->Blue1/2/3。
 - 補上 EMA/ATR fallback（避免 built-in 或 history 欄位不一致導致失敗）。
+
+## 2026-03-11 - FXCM indicator 載入錯誤修正（最小可載入版）
+- 修正 `SB_Full_Manual_Workflow_FXCM.lua` 的結構，保留單一 `Init()`，且 `indicator.*` 呼叫全部限制於 `Init()` 內。
+- 參數 SSOT 統一為 `debug/dayatrlen/dumppumpatrm`，`Prepare()` 讀取 id 與 `Init()` 宣告完全一致。
+- 移除與本次目標無關之策略邏輯（getHistory/addStream/EMA/ATR/FVG/Blue/score/focus 等），避免匯入時參數與平台 API 互斥。
+- 新增最小狀態表欄位：`S.gate`、`S.cananswer`、`S.lastrule`，用於顯式 gate 狀態與每次輸入判定紀錄。
