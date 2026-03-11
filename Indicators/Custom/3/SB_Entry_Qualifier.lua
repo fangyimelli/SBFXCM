@@ -9,7 +9,7 @@ function Init()
     indicator.parameters:addInteger("fvgexpire", "FVG Expire", "Bars before a fair value gap expires", 10)
     indicator.parameters:addDouble("fvgminatra", "FVG Min ATR", "Minimum ATR multiple for fair value gap size", 1.0)
     indicator.parameters:addDouble("fvgminatraP", "FVG Min ATR Percent", "Minimum ATR ratio percent threshold for fair value gap size", 100.0)
-    indicator.parameters:addString("retestmode", "Retest Mode", "Retest mode selector", "close")
+    indicator.parameters:addString("retestmode", "Retest Mode", "Retest mode selector", "BOS")
     indicator.parameters:addDouble("retbufa", "Retest Buffer ATR", "Retest buffer in ATR units", 0.1)
     indicator.parameters:addDouble("retbufaP", "Retest Buffer ATR Percent", "Retest buffer ATR percent", 10.0)
     indicator.parameters:addInteger("entryexp", "Entry Expire", "Bars before entry signal expires", 3)
@@ -275,11 +275,12 @@ local function writeEntryStreams(period)
     end
 end
 
-local function inCooldown(lastPeriod, cooldownBars, nowPeriod)
-    if lastPeriod == nil or cooldownBars == nil or cooldownBars <= 0 or nowPeriod == nil then
+local function inCooldown(lastTs, minutes, nowTs)
+    if lastTs == nil or minutes == nil or minutes <= 0 or nowTs == nil then
         return false
     end
-    return nowPeriod <= (lastPeriod + cooldownBars)
+    local spanDays = minutes / 1440
+    return nowTs <= (lastTs + spanDays)
 end
 
 local function calcATR(history, idx, len)
@@ -354,6 +355,7 @@ function Prepare(nameOnly)
     S.fvgMit = nil
     S.retestUpper = nil
     S.retestLower = nil
+    S.retestTime = nil
     S.blue1Time = nil
     S.blue2Time = nil
     S.blue3Time = nil
@@ -379,7 +381,7 @@ function Prepare(nameOnly)
     T.fvgexpire = getParam("fvgexpire", 10)
     T.fvgminatra = getParam("fvgminatra", 1.0)
     T.fvgminatraP = getParam("fvgminatraP", 100.0)
-    T.retestmode = getParam("retestmode", "close")
+    T.retestmode = getParam("retestmode", "BOS")
     T.retbufa = getParam("retbufa", 0.1)
     T.retbufaP = getParam("retbufaP", 10.0)
     T.entryexp = getParam("entryexp", 3)
@@ -458,6 +460,232 @@ function Prepare(nameOnly)
     instance:name(profile:id() .. "(" .. source:name() .. ")")
 end
 
+local function locateHistoryIndex(history, ts)
+    if history == nil or ts == nil then
+        return nil
+    end
+    local i = history:size() - 1
+    while i >= history:first() do
+        local barTs = history:date(i)
+        if barTs ~= nil and barTs <= ts then
+            return i
+        end
+        i = i - 1
+    end
+    return nil
+end
+
+local function currentATR15(m15Index)
+    if I.atr15 == nil or H.m15 == nil or m15Index == nil then
+        return nil
+    end
+    if I.atr15Fallback == true then
+        return calcATR(H.m15, m15Index, 14)
+    end
+    return I.atr15.DATA[m15Index]
+end
+
+local function resetFvg(waitState)
+    S.fvgUpper = nil
+    S.fvgLower = nil
+    S.fvgMid = nil
+    S.fvgTime = nil
+    S.fvgMit = nil
+    if waitState ~= nil then
+        S.state = waitState
+    end
+end
+
+local function updateFvg(period)
+    if T.usefvg ~= true then
+        S.state = WAITRET
+        return
+    end
+
+    local nowTs = source:date(period)
+    local m15Index = locateHistoryIndex(H.m15, nowTs)
+    if m15Index == nil or m15Index < (H.m15:first() + 2) then
+        return
+    end
+
+    if S.state == WAITMIT and S.fvgTime ~= nil and T.fvgexpire > 0 then
+        if nowTs > (S.fvgTime + (T.fvgexpire / 1440)) then
+            resetFvg(WAITFVG)
+        end
+        return
+    end
+
+    if S.state ~= WAITFVG then
+        return
+    end
+
+    local low = H.m15.low[m15Index]
+    local high = H.m15.high[m15Index]
+    local low2 = H.m15.low[m15Index - 2]
+    local high2 = H.m15.high[m15Index - 2]
+    local bull = low > high2
+    local bear = high < low2
+    if (S.bosDir or 0) > 0 and not bull then
+        return
+    end
+    if (S.bosDir or 0) < 0 and not bear then
+        return
+    end
+
+    local upper = nil
+    local lower = nil
+    if bull then
+        upper = low
+        lower = high2
+    elseif bear then
+        upper = low2
+        lower = high
+    else
+        return
+    end
+
+    local atr15 = currentATR15(m15Index)
+    if atr15 == nil then
+        return
+    end
+    local minByA = atr15 * (T.fvgminatra or 0)
+    local minByP = atr15 * ((T.fvgminatraP or 0) / 100)
+    local minGap = math.max(minByA, minByP)
+    if (upper - lower) < minGap then
+        return
+    end
+
+    S.fvgUpper = upper
+    S.fvgLower = lower
+    S.fvgMid = (upper + lower) / 2
+    S.fvgTime = H.m15:date(m15Index)
+    S.fvgMit = false
+    S.state = WAITMIT
+end
+
+local function updateMitigation(period)
+    if S.state ~= WAITMIT or S.fvgUpper == nil or S.fvgLower == nil then
+        return
+    end
+    local price = nil
+    if (S.bosDir or 0) > 0 then
+        price = H.m5.low[period]
+        if price == nil then return end
+        local isAplus = S.isAplus == true
+        local target = isAplus and (S.fvgMid or S.fvgUpper) or S.fvgUpper
+        if price <= target then
+            S.fvgMit = true
+            S.state = WAITRET
+        end
+    elseif (S.bosDir or 0) < 0 then
+        price = H.m5.high[period]
+        if price == nil then return end
+        local isAplus = S.isAplus == true
+        local target = isAplus and (S.fvgMid or S.fvgLower) or S.fvgLower
+        if price >= target then
+            S.fvgMit = true
+            S.state = WAITRET
+        end
+    end
+end
+
+local function updateRetest(period)
+    if S.state ~= WAITRET then
+        return false
+    end
+    local nowTs = source:date(period)
+    if S.retestTime ~= nil and T.entryexp > 0 and nowTs > (S.retestTime + (T.entryexp / 1440)) then
+        S.retestUpper = nil
+        S.retestLower = nil
+        S.retestTime = nil
+        resetFvg(WAITFVG)
+        return false
+    end
+
+    local m15Index = locateHistoryIndex(H.m15, nowTs)
+    local atr15 = currentATR15(m15Index)
+    if atr15 == nil then
+        return false
+    end
+    local buf = math.max(atr15 * (T.retbufa or 0), atr15 * ((T.retbufaP or 0) / 100))
+
+    local mode = string.upper(tostring(T.retestmode or "BOS"))
+    local center = S.bosLevel or source.close[period]
+    if mode == "PREPIVOT" then
+        if (S.bosDir or 0) > 0 then
+            center = pivotHigh(H.m5, period - 1, 2, 2) or center
+        else
+            center = pivotLow(H.m5, period - 1, 2, 2) or center
+        end
+    elseif mode == "BAND" then
+        center = S.fvgMid or center
+    end
+
+    S.retestUpper = center + buf
+    S.retestLower = center - buf
+    S.retestTime = S.retestTime or nowTs
+
+    local hit = false
+    if (S.bosDir or 0) > 0 then
+        hit = H.m5.low[period] <= S.retestUpper and H.m5.high[period] >= S.retestLower
+    elseif (S.bosDir or 0) < 0 then
+        hit = H.m5.high[period] >= S.retestLower and H.m5.low[period] <= S.retestUpper
+    end
+    return hit
+end
+
+local function updateBlueSignals(period, retestHit)
+    local nowTs = source:date(period)
+    local blocked = S.blockedReason ~= nil
+    if retestHit and T.usebluelights and not blocked and not inCooldown(S.lastBlue1Alert, T.cdblue1, nowTs) then
+        S.blue1Time = nowTs
+        S.lastBlue1Alert = nowTs
+        S.state = BLUE1
+    end
+
+    if S.blue1Time ~= nil and (nowTs - S.blue1Time) <= ((T.reactbars or 0) / 288) then
+        local reclaimOk = true
+        if T.requirereclaimb2 then
+            if (S.bosDir or 0) > 0 then
+                reclaimOk = source.close[period] >= (S.retestUpper or source.close[period])
+            else
+                reclaimOk = source.close[period] <= (S.retestLower or source.close[period])
+            end
+        end
+        local rejectOk = true
+        if T.enablerejectb2 then
+            rejectOk = wickReject(source.open[period], source.high[period], source.low[period], source.close[period], S.bosDir, T.rejectwickmin, T.rejectbodymax)
+        end
+        if reclaimOk and rejectOk and not inCooldown(S.lastBlue2Alert, T.cdblue2, nowTs) then
+            S.blue2Time = nowTs
+            S.lastBlue2Alert = nowTs
+            S.state = BLUE2
+        end
+    end
+
+    if S.blue2Time ~= nil then
+        local dirOk = ((S.bosDir or 0) > 0 and source.close[period] >= source.open[period]) or
+            ((S.bosDir or 0) < 0 and source.close[period] <= source.open[period])
+        local emaOk = true
+        if T.reqema20b3 then
+            local ema = I.ema20m5.DATA ~= nil and I.ema20m5.DATA[period] or nil
+            if ema == nil and I.ema20m5.fallback == true then
+                ema = source.median[period]
+            end
+            if (S.bosDir or 0) > 0 then
+                emaOk = source.close[period] >= ema
+            else
+                emaOk = source.close[period] <= ema
+            end
+        end
+        if dirOk and emaOk and not inCooldown(S.lastBlue3Alert, T.cdblue3, nowTs) then
+            S.blue3Time = nowTs
+            S.lastBlue3Alert = nowTs
+            S.state = BLUE3
+        end
+    end
+end
+
 function Update(period, mode)
     if period < first then
         return
@@ -482,7 +710,7 @@ function Update(period, mode)
     end
 
     if I.atr15Fallback == true then
-        local idx = H.m15:size() - 1
+        local idx = locateHistoryIndex(H.m15, source:date(period))
         local atr = calcATR(H.m15, idx, 14)
         if atr == nil then
             block("atr15_fallback_not_ready")
@@ -490,6 +718,15 @@ function Update(period, mode)
             return
         end
     end
+
+    if S.state == IDLE then
+        S.state = WAITFVG
+    end
+
+    updateFvg(period)
+    updateMitigation(period)
+    local retestHit = updateRetest(period)
+    updateBlueSignals(period, retestHit)
 
     writeEntryStreams(period)
 end
