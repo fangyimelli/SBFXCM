@@ -1,5 +1,16 @@
 # 10-change-log
 
+## 2026-03-11
+- 文件層級完成四檔拆分規格（DayType / Structure / Entry / HUD），並補齊建議載入順序與欄位責任邊界。
+- 狀態機敘述統一為單一路徑：`DayType -> Structure -> Entry`；HUD 僅做顯示與診斷，不再承擔 gate 決策。
+- gate 決策文件化整併：
+  - 優先順序統一為 `focus 視窗 -> trade day -> session/structure -> entry/score -> daily max trades`。
+  - `DEBUG` 編碼語義固定（0/-1/-2/-9），避免多處覆寫造成診斷不一致。
+- focus 對齊規則補充：
+  - 以 NY 09:30 為 anchor。
+  - 加入跨週期 map（5m/15m/D1）對齊時的驗證步驟與失敗判讀。
+- 新增回歸規則文件 `docs/11-regression-rules.md`，要求每一個 bug fix 對應一條可重跑規則。
+
 ## 2026-03-03
 - 新增 FXCM Indicore 單檔指標：`Indicators/Custom/3/SB_Full_Manual_Workflow_FXCM.lua`。
 - 完成平台相容性修正：
