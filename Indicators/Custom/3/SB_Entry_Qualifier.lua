@@ -326,9 +326,9 @@ local function trace(message)
     end
 
     local text = "[SB_Entry_Qualifier] " .. tostring(message)
-    if terminal ~= nil and terminal:alertMessage ~= nil then
+    if terminal ~= nil and terminal.alertMessage ~= nil then
         terminal:alertMessage(text, core.now())
-    elseif core ~= nil and core.host ~= nil and core.host:trace ~= nil then
+    elseif core ~= nil and core.host ~= nil and core.host.trace ~= nil then
         core.host:trace(text)
     end
 end
