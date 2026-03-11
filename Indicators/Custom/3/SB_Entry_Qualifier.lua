@@ -252,7 +252,10 @@ local function writeEntryStreams(period)
         T.retl[period] = normalizeStreamValue(S.retestLower)
     end
 
-    local closePrice = source ~= nil and source.close[period] or nil
+    local closePrice = nil
+    if source ~= nil then
+        closePrice = source.close[period]
+    end
     local blue1Value = isTriggerOnPeriod(S.blue1Time, period) and closePrice or emptyStreamValue()
     local blue2Value = isTriggerOnPeriod(S.blue2Time, period) and closePrice or emptyStreamValue()
     local blue3Value = isTriggerOnPeriod(S.blue3Time, period) and closePrice or emptyStreamValue()
@@ -412,8 +415,12 @@ function Prepare(nameOnly)
     -- Optional stream: enable when runtime stability is confirmed.
     T.fvgmid = nil
 
-    local instrument = source ~= nil and source:instrument() or nil
-    local isBid = source ~= nil and source:isBid() or true
+    local instrument = nil
+    local isBid = true
+    if source ~= nil then
+        instrument = source:instrument()
+        isBid = source:isBid()
+    end
 
     local reason = nil
     H.m5, reason = safeGetHistory(instrument, "m5", isBid)
@@ -719,7 +726,10 @@ end
 
 local function updateBlueSignals(period, retestHit)
     local nowTs = source:date(period)
-    local blocked = S.blockedReason ~= nil
+    local blocked = false
+    if S.blockedReason ~= nil then
+        blocked = true
+    end
     if retestHit and T.usebluelights and not blocked and not inCooldown(S.lastBlue1Alert, T.cdblue1, nowTs) then
         S.blue1Time = nowTs
         S.lastBlue1Alert = nowTs
@@ -751,7 +761,10 @@ local function updateBlueSignals(period, retestHit)
             ((S.bosDir or 0) < 0 and source.close[period] <= source.open[period])
         local emaOk = true
         if T.reqema20b3 then
-            local ema = I.ema20m5.DATA ~= nil and I.ema20m5.DATA[period] or nil
+            local ema = nil
+            if I.ema20m5.DATA ~= nil then
+                ema = I.ema20m5.DATA[period]
+            end
             if ema == nil and I.ema20m5.fallback == true then
                 ema = source.median[period]
             end
