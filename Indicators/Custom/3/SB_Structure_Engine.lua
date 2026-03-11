@@ -20,33 +20,35 @@ local outBos = nil
 local outFvgU = nil
 local outFvgL = nil
 
-local function parseHHMM(s)
-    local h = tonumber(string.sub(s, 1, 2)) or 0
-    local m = tonumber(string.sub(s, 3, 4)) or 0
+local function parseHHMM(hhmm)
+    local digits = tostring(hhmm or "0000")
+    if string.len(digits) < 4 then
+        digits = string.rep("0", 4 - string.len(digits)) .. digits
+    end
+    local h = tonumber(string.sub(digits, 1, 2)) or 0
+    local m = tonumber(string.sub(digits, 3, 4)) or 0
+    h = math.min(23, math.max(0, h))
+    m = math.min(59, math.max(0, m))
     return h, m
 end
 
-local function parseSession(txt)
-    local a, b = string.match(txt, "(%d%d%d%d)%-(%d%d%d%d)")
+local function parseSession(sess)
+    local a, b = string.match(tostring(sess or ""), "(%d%d%d%d)%-(%d%d%d%d)")
     return a or "0000", b or "2359"
 end
 
-local function minFromDate(t)
-    local dt = core.dateToTable(t)
-    return dt.hour * 60 + dt.min
-end
-
-local function inSession(t, sessionTxt)
-    local s1, s2 = parseSession(sessionTxt)
+local function inSession(ts, sess)
+    local s1, s2 = parseSession(sess)
     local h1, m1 = parseHHMM(s1)
     local h2, m2 = parseHHMM(s2)
     local x = h1 * 60 + m1
     local y = h2 * 60 + m2
-    local v = minFromDate(t)
+    local dt = core.dateToTable(ts)
+    local v = dt.hour * 60 + dt.min
     if x <= y then
         return v >= x and v <= y
     end
-    return (v >= x) or (v <= y)
+    return v >= x or v <= y
 end
 
 function Init()

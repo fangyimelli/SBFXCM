@@ -156,12 +156,108 @@ function Init()
     indicator.parameters:addBoolean("debugMode", "Debug Mode", false)
 end
 
-local function safeStream(history, field)
+local function dayKey(ts)
+    local d = core.dateToTable(ts)
+    return (d.year * 10000) + (d.month * 100) + d.day
+end
+
+local function parseHHMM(hhmm)
+    local digits = tostring(hhmm or "0000")
+    if string.len(digits) < 4 then
+        digits = string.rep("0", 4 - string.len(digits)) .. digits
+    end
+    local h = tonumber(string.sub(digits, 1, 2)) or 0
+    local m = tonumber(string.sub(digits, 3, 4)) or 0
+    h = math.min(23, math.max(0, h))
+    m = math.min(59, math.max(0, m))
+    return h, m
+end
+
+local function parseSession(sess)
+    local a, b = string.match(tostring(sess or ""), "(%d%d%d%d)%-(%d%d%d%d)")
+    return a or "0000", b or "2359"
+end
+
+local function inSession(ts, sess)
+    local s1, s2 = parseSession(sess)
+    local h1, m1 = parseHHMM(s1)
+    local h2, m2 = parseHHMM(s2)
+    local x = h1 * 60 + m1
+    local y = h2 * 60 + m2
+    local dt = core.dateToTable(ts)
+    local v = dt.hour * 60 + dt.min
+    if x <= y then
+        return v >= x and v <= y
+    end
+    return v >= x or v <= y
+end
+
+local function pipSize(symbol)
+    local p = nil
+    if instance ~= nil and instance.bid ~= nil and instance.bid:instrument() ~= nil then
+        p = instance.bid:instrument():getPipSize()
+    end
+    if p ~= nil and p > 0 then
+        return p
+    end
+    local symText = (type(symbol) == "string") and symbol or tostring(symbol or "")
+    if string.find(string.upper(symText), "JPY", 1, true) ~= nil then
+        return 0.01
+    end
+    return 0.0001
+end
+
+local function wickReject(dir, o, h, l, c, wickMin, bodyMax)
+    local body = math.abs(c - o)
+    local range = h - l
+    if range <= 0 then return false end
+    local upperWick = h - math.max(o, c)
+    local lowerWick = math.min(o, c) - l
+    local wick = (dir == 1) and lowerWick or upperWick
+    return (wick / range) >= wickMin and (body / range) <= bodyMax
+end
+
+local function pivotHigh(stream, p, left, right)
+    if stream == nil or p - left < 0 or p + right >= stream:size() then
+        return nil
+    end
+    local v = stream[p]
+    for i = p - left, p + right do
+        if i ~= p and stream[i] >= v then
+            return nil
+        end
+    end
+    return v
+end
+
+local function pivotLow(stream, p, left, right)
+    if stream == nil or p - left < 0 or p + right >= stream:size() then
+        return nil
+    end
+    local v = stream[p]
+    for i = p - left, p + right do
+        if i ~= p and stream[i] <= v then
+            return nil
+        end
+    end
+    return v
+end
+
+local function safeGetHistory(instrument, timeframe, from, count)
+    local fromV = tonumber(from) or 0
+    local countV = tonumber(count) or 0
+    return host:execute("getHistory", instrument, tostring(timeframe), fromV, countV)
+end
+
+local function safeGetPriceStream(history, fieldName)
+    if history == nil then return nil end
+    local base = string.lower(tostring(fieldName or ""))
     local candidates = {
-        string.lower(field),
-        string.upper(field),
-        field,
-        field .. "s",
+        base,
+        string.upper(base),
+        fieldName,
+        base .. "s",
+        string.upper(base) .. "S",
     }
     for _, key in ipairs(candidates) do
         local ok, s = pcall(function() return history[key] end)
@@ -172,38 +268,20 @@ local function safeStream(history, field)
     return nil
 end
 
-local function parseHHMM(s)
-    local h = tonumber(string.sub(s, 1, 2)) or 0
-    local m = tonumber(string.sub(s, 3, 4)) or 0
-    return h, m
-end
-
-local function parseSession(txt)
-    local a, b = string.match(txt, "(%d%d%d%d)%-(%d%d%d%d)")
-    return a or "0000", b or "2359"
-end
-
-local function minFromDate(t)
-    local dt = core.dateToTable(t)
-    return dt.hour * 60 + dt.min, dt
-end
-
-local function inSession(t, sessionTxt)
-    local s1, s2 = parseSession(sessionTxt)
-    local h1, m1 = parseHHMM(s1)
-    local h2, m2 = parseHHMM(s2)
-    local x = h1 * 60 + m1
-    local y = h2 * 60 + m2
-    local v = minFromDate(t)
-    if x <= y then
-        return v >= x and v <= y
+local function alignTimeIndex(baseHistory, targetHistory)
+    local mapping = {}
+    local j = 0
+    if baseHistory == nil or targetHistory == nil then
+        return mapping
     end
-    return (v >= x) or (v <= y)
-end
-
-local function dayKeyFromTime(t)
-    local d = core.dateToTable(t)
-    return string.format("%04d-%02d-%02d", d.year, d.month, d.day)
+    for i = 0, baseHistory:size() - 1 do
+        local ts = baseHistory:date(i)
+        while (j + 1) < targetHistory:size() and targetHistory:date(j + 1) <= ts do
+            j = j + 1
+        end
+        mapping[i] = j
+    end
+    return mapping
 end
 
 local function parseFocusDate(s)
@@ -235,24 +313,6 @@ local function atrFallback(histO, histH, histL, histC, period, outArr, i)
     local tr = math.max(histH[i] - histL[i], math.abs(histH[i] - prev), math.abs(histL[i] - prev))
     outArr[i] = ((outArr[i - 1] or tr) * (period - 1) + tr) / period
     return outArr[i]
-end
-
-local function buildMaps()
-    map5to15 = {}
-    map5toD = {}
-    local j15 = 0
-    local jD = 0
-    for i = 0, h5:size() - 1 do
-        local t5 = h5:date(i)
-        while j15 + 1 < h15:size() and h15:date(j15 + 1) <= t5 do
-            j15 = j15 + 1
-        end
-        while jD + 1 < hD:size() and hD:date(jD + 1) <= t5 do
-            jD = jD + 1
-        end
-        map5to15[i] = j15
-        map5toD[i] = jD
-    end
 end
 
 local function fscore(inNyVal, hasSweep, hasBos, hasFvgVal, hasEntry)
@@ -301,26 +361,27 @@ function Prepare(nameOnly)
     local first = gSource:first()
 
     -- Mandatory fixed-argument getHistory signature
-    h5 = host:execute("getHistory", gSource:instrument(), "m5", 0, 10000)
-    h15 = host:execute("getHistory", gSource:instrument(), "m15", 0, 10000)
-    hD = host:execute("getHistory", gSource:instrument(), "D1", 0, 3000)
+    h5 = safeGetHistory(gSource:instrument(), "m5", 0, 10000)
+    h15 = safeGetHistory(gSource:instrument(), "m15", 0, 10000)
+    hD = safeGetHistory(gSource:instrument(), "D1", 0, 3000)
 
-    streamOHLC5.open = safeStream(h5, "open")
-    streamOHLC5.high = safeStream(h5, "high")
-    streamOHLC5.low = safeStream(h5, "low")
-    streamOHLC5.close = safeStream(h5, "close")
+    streamOHLC5.open = safeGetPriceStream(h5, "open")
+    streamOHLC5.high = safeGetPriceStream(h5, "high")
+    streamOHLC5.low = safeGetPriceStream(h5, "low")
+    streamOHLC5.close = safeGetPriceStream(h5, "close")
 
-    streamOHLC15.open = safeStream(h15, "open")
-    streamOHLC15.high = safeStream(h15, "high")
-    streamOHLC15.low = safeStream(h15, "low")
-    streamOHLC15.close = safeStream(h15, "close")
+    streamOHLC15.open = safeGetPriceStream(h15, "open")
+    streamOHLC15.high = safeGetPriceStream(h15, "high")
+    streamOHLC15.low = safeGetPriceStream(h15, "low")
+    streamOHLC15.close = safeGetPriceStream(h15, "close")
 
-    streamOHLCD.open = safeStream(hD, "open")
-    streamOHLCD.high = safeStream(hD, "high")
-    streamOHLCD.low = safeStream(hD, "low")
-    streamOHLCD.close = safeStream(hD, "close")
+    streamOHLCD.open = safeGetPriceStream(hD, "open")
+    streamOHLCD.high = safeGetPriceStream(hD, "high")
+    streamOHLCD.low = safeGetPriceStream(hD, "low")
+    streamOHLCD.close = safeGetPriceStream(hD, "close")
 
-    buildMaps()
+    map5to15 = alignTimeIndex(h5, h15)
+    map5toD = alignTimeIndex(h5, hD)
 
     focusKey = instance.parameters.focusdate
     if instance.parameters.focusmode and focusKey ~= "" then
@@ -388,14 +449,6 @@ local function visibleForFocus(t)
     return t >= focusStart and t < focusEnd
 end
 
-local function wickReject(o, h, l, c)
-    local body = math.abs(c - o)
-    local range = h - l
-    if range <= 0 then return false end
-    local wick = range - body
-    return (wick / range) >= instance.parameters.rejectWickRatioMin and (body / range) <= instance.parameters.rejectBodyRatioMax
-end
-
 function Update(period, mode)
     if not inited then inited = true end
     if period < 2 then return end
@@ -416,10 +469,10 @@ function Update(period, mode)
     local a5 = atrFallback(gSource.open, gSource.high, gSource.low, gSource.close, instance.parameters.sweepAtrLen, atr5, period)
     local e20 = emaFallback(gSource.close, 20, period)
 
-    local dayKey = dayKeyFromTime(t5)
-    if currentDayKey == nil then currentDayKey = dayKey end
-    if dayKey ~= currentDayKey then
-        currentDayKey = dayKey
+    local dayK = dayKey(t5)
+    if currentDayKey == nil then currentDayKey = dayK end
+    if dayK ~= currentDayKey then
+        currentDayKey = dayK
         resetDay()
     end
 
@@ -442,7 +495,7 @@ function Update(period, mode)
         local c15 = streamOHLC15.close[idx15]
         local o15 = streamOHLC15.open[idx15]
         local a15 = atrFallback(streamOHLC15.open, streamOHLC15.high, streamOHLC15.low, streamOHLC15.close, instance.parameters.sweepAtrLen, atr15, idx15)
-        local mintick = instance.bid:instrument():getPipSize() or 0.0001
+        local mintick = pipSize(gSource:instrument())
         local sweepThreshold = math.max(instance.parameters.sweepMinTicks * mintick, a15 * instance.parameters.sweepMinAtrMult)
 
         local upSweep = asiaHigh ~= nil and (h15v - asiaHigh) >= sweepThreshold
@@ -563,7 +616,7 @@ function Update(period, mode)
             local minsSinceBlue2 = (t5 - blue2Last) / 60
             if minsSinceBlue2 >= instance.parameters.cooldownBlue2 then
                 local reclaim = (bosDir == 1 and c5 > bosLevel) or (bosDir == -1 and c5 < bosLevel)
-                local rejectOk = (not instance.parameters.enableRejectForBlue2) or wickReject(o5, h5v, l5v, c5)
+                local rejectOk = (not instance.parameters.enableRejectForBlue2) or wickReject(bosDir, o5, h5v, l5v, c5, instance.parameters.rejectWickRatioMin, instance.parameters.rejectBodyRatioMax)
                 if ((not instance.parameters.requireReclaimForBlue2) or reclaim) and rejectOk then
                     blue2 = true
                     blue2Last = t5
@@ -600,7 +653,7 @@ function Update(period, mode)
         outRetL[period] = retL
         if blue3 then
             local entry = c5
-            local pip = instance.bid:instrument():getPipSize() or 0.0001
+            local pip = pipSize(gSource:instrument())
             local tp = entry + (bosDir * instance.parameters.targetPips * pip)
             local sl = entry - (bosDir * instance.parameters.slPipsDefault * pip)
             outEntry[period] = entry
@@ -633,6 +686,6 @@ function Update(period, mode)
     end
 
     if instance.parameters.focusmode and focusStart ~= nil and inNy and inFocus and instance.parameters.debugMode then
-        dbg("Focus " .. focusKey .. " active; day=" .. dayKey .. ", trades=" .. tostring(dailyTrades) .. ", score=" .. tostring(score))
+        dbg("Focus " .. focusKey .. " active; day=" .. tostring(dayK) .. ", trades=" .. tostring(dailyTrades) .. ", score=" .. tostring(score))
     end
 end

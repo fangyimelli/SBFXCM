@@ -19,9 +19,9 @@ local function dbg(msg)
     end
 end
 
-local function dayKeyFromTime(t)
-    local d = core.dateToTable(t)
-    return string.format("%04d-%02d-%02d", d.year, d.month, d.day)
+local function dayKey(ts)
+    local d = core.dateToTable(ts)
+    return (d.year * 10000) + (d.month * 100) + d.day
 end
 
 function Init()
@@ -56,7 +56,7 @@ function Update(period, mode)
     end
 
     local t = source:date(period)
-    local key = dayKeyFromTime(t)
+    local key = dayKey(t)
     if state.dayKey ~= key then
         state.dayKey = key
         state.bias = 0
