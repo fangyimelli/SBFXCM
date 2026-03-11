@@ -1,50 +1,24 @@
--- SB DayType FRD/FGD (Skeleton)
--- Standalone module extracted from SB_Full_Manual_Workflow_FXCM logic.
+-- SB DayType FRD/FGD (D1 only)
+-- Standalone D1 bias/trade-day classifier.
 
 local NAME = "SB DayType FRD FGD"
 
-local STAGE = {
-    IDLE = 0,
-    ASIAREADY = 1,
-    SWEPT = 2,
-    BOS = 3,
-    WAITFVG = 4,
-    WAITMIT = 5,
-    WAITRET = 6,
-    BLUE1 = 7,
-    BLUE2 = 8,
-    BLUE3 = 9,
-    DONE = 10,
-}
-
 local source = nil
+local biasstream = nil
+local tradedaystream = nil
+
 local state = {
     dayKey = nil,
-    bias = 0,
-    sweepDir = 0,
-    bosDir = 0,
     isTradeDay = false,
-    stage = STAGE.IDLE,
-    gate = {
-        gateReason = "init",
-        gateType = "system",
-        decisionTs = nil,
-        decisionDayKey = nil,
-    },
+    bias = 0,
+    dumpYesterday = false,
+    pumpYesterday = false,
 }
 
-local outBias = nil
-local outTradeDay = nil
-
 local function dbg(msg)
-    if instance.parameters.debugMode then
+    if instance.parameters.debug then
         core.host:trace(NAME .. " | " .. msg)
     end
-end
-
-local function dayKey(ts)
-    local d = core.dateToTable(ts)
-    return (d.year * 10000) + (d.month * 100) + d.day
 end
 
 local function normalizeDir(v)
@@ -60,25 +34,39 @@ local function normalizeDir(v)
     return 0
 end
 
-local function recordDecision(ts, gateType, gateReason)
-    state.gate.gateType = gateType
-    state.gate.gateReason = gateReason
-    state.gate.decisionTs = ts
-    state.gate.decisionDayKey = dayKey(ts)
+local function getDayKey(ts)
+    local d = core.dateToTable(ts)
+    return (d.year * 10000) + (d.month * 100) + d.day
+end
+
+local function avgDayRange(period, len)
+    local sum = 0
+    local count = 0
+    local idx = period - 1
+    while idx >= source:first() and count < len do
+        sum = sum + math.abs(source.close[idx] - source.open[idx])
+        count = count + 1
+        idx = idx - 1
+    end
+    if count == 0 then
+        return 0
+    end
+    return sum / count
 end
 
 function Init()
     indicator:name(NAME)
-    indicator:description("Skeleton: FRD/FGD day type detector")
+    indicator:description("D1 FRD/FGD classifier with bias/trade-day streams")
     indicator:requiredSource(core.Bar)
     indicator:type(core.Indicator)
 
     indicator.parameters:addGroup("Core")
-    indicator.parameters:addInteger("dayMoveAtrLen", "Day Move ATR Length", 14, 2, 100)
-    indicator.parameters:addDouble("dumpPumpMinAtrMult", "Dump/Pump Min ATR Mult", 1.0, 0.1, 5.0)
-
-    indicator.parameters:addGroup("Debug")
-    indicator.parameters:addBoolean("debugMode", "Debug Mode", false)
+    indicator.parameters:addInteger("dayatrlen", "dayatrlen", 14, 2, 200)
+    indicator.parameters:addDouble("dumppumpatrm", "dumppumpatrm", 1.0, 0.1, 10.0)
+    indicator.parameters:addBoolean("showdaytypelabels", "showdaytypelabels", true)
+    indicator.parameters:addBoolean("debug", "debug", false)
+    indicator.parameters:addBoolean("focusmode", "focusmode", false)
+    indicator.parameters:addInteger("focusinput", "focusinput", 0, -1, 1)
 end
 
 function Prepare(nameOnly)
@@ -89,41 +77,86 @@ function Prepare(nameOnly)
     end
 
     local first = source:first()
-    outBias = instance:addStream("BIAS", core.Line, "Bias", "Bias", first)
-    outTradeDay = instance:addStream("TRDAY", core.Line, "TradeDay", "TradeDay", first)
+    biasstream = instance:addStream("BIAS", core.Line, "biasstream", "biasstream", first)
+    tradedaystream = instance:addStream("TRDAY", core.Line, "tradedaystream", "tradedaystream", first)
 end
 
 function Update(period, mode)
-    if period < source:first() then
+    if period < source:first() + 2 then
         return
     end
 
     local t = source:date(period)
-    local key = dayKey(t)
+    local key = getDayKey(t)
     if state.dayKey ~= key then
         state.dayKey = key
-        state.bias = 0
-        state.isTradeDay = false
-        state.stage = STAGE.IDLE
     end
 
-    state.bias = normalizeDir(state.bias)
-    state.sweepDir = normalizeDir(state.sweepDir)
-    state.bosDir = normalizeDir(state.bosDir)
-    recordDecision(t, "input", "daytype_update")
+    -- Core data (D1)
+    local yOpen = source.open[period - 1]
+    local yClose = source.close[period - 1]
+    local yRange = math.abs(yClose - yOpen)
 
-    -- TODO: migrate complete FRD/FGD classification logic from monolith.
-    outBias[period] = state.bias
-    outTradeDay[period] = state.isTradeDay and 1 or 0
+    local y2Open = source.open[period - 2]
+    local y2Close = source.close[period - 2]
+    local y2Range = math.abs(y2Close - y2Open)
+
+    local dayATR = avgDayRange(period, instance.parameters.dayatrlen)
+
+    -- Core judgements
+    local dumpYesterday = (yOpen - yClose) >= (instance.parameters.dumppumpatrm * dayATR)
+    local pumpYesterday = (yClose - yOpen) >= (instance.parameters.dumppumpatrm * dayATR)
+
+    local yFgd = pumpYesterday and (yClose > y2Close) and (yRange >= y2Range)
+    local yFrd = dumpYesterday and (yClose < y2Close) and (yRange >= y2Range)
+
+    local dOpen = source.open[period]
+    local dClose = source.close[period]
+    local dFgd = yFrd and (dClose > dOpen)
+    local dFrd = yFgd and (dClose < dOpen)
+
+    local tradeDayToday = yFgd or yFrd or dFgd or dFrd
+
+    local bias = 0
+    if dFgd or yFgd then
+        bias = 1
+    elseif dFrd or yFrd then
+        bias = -1
+    end
+
+    if instance.parameters.focusmode then
+        bias = normalizeDir(instance.parameters.focusinput)
+    end
+
+    state.isTradeDay = tradeDayToday
+    state.bias = normalizeDir(bias)
+    state.dumpYesterday = dumpYesterday
+    state.pumpYesterday = pumpYesterday
+
+    biasstream[period] = state.bias
+    tradedaystream[period] = state.isTradeDay and 1 or 0
+
+    if instance.parameters.debug then
+        dbg(string.format(
+            "isTradeDay=%s, bias=%d, dumpYesterday=%s, pumpYesterday=%s",
+            tostring(state.isTradeDay),
+            state.bias,
+            tostring(state.dumpYesterday),
+            tostring(state.pumpYesterday)
+        ))
+    end
+
+    if instance.parameters.showdaytypelabels and mode == core.UpdateLast then
+        -- Stream-only module: label drawing intentionally omitted.
+    end
 end
 
 function AsyncOperationFinished(cookie, success, message, message1, message2)
-    -- Intentionally empty: this skeleton currently does not use async history requests.
-    dbg(string.format("AsyncOperationFinished(cookie=%s, success=%s)", tostring(cookie), tostring(success)))
+    -- No async operations in this D1 stream-only module.
 end
 
 function ReleaseInstance()
-    outBias = nil
-    outTradeDay = nil
+    biasstream = nil
+    tradedaystream = nil
     source = nil
 end
