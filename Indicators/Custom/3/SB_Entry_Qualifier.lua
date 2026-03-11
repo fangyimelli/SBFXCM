@@ -28,7 +28,13 @@ end
 
 local source = nil
 local first = nil
+local S = {}
 local T = {}
+local H = {}
+local I = {}
+
+local IDLE, WAITFVG, WAITMIT, WAITRET, BLUE1, BLUE2, BLUE3, BLOCKED, EXPIRED, FAILED, DONE =
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 
 local function trace(message)
     if not T.debug then
@@ -55,6 +61,31 @@ end
 function Prepare(nameOnly)
     source = instance.source
     first = source:first()
+
+    S.state = IDLE
+    S.dayKey = nil
+    S.bosDir = nil
+    S.bosLevel = nil
+    S.bosTime = nil
+    S.fvgUpper = nil
+    S.fvgLower = nil
+    S.fvgMid = nil
+    S.fvgTime = nil
+    S.fvgMit = nil
+    S.retestUpper = nil
+    S.retestLower = nil
+    S.blue1Time = nil
+    S.blue2Time = nil
+    S.blue3Time = nil
+    S.lastBlue1Alert = nil
+    S.lastBlue2Alert = nil
+    S.lastBlue3Alert = nil
+    S.blockedReason = nil
+
+    H.source = source
+
+    I.atr = nil
+    I.ema20 = nil
 
     T.debug = instance.parameters.debug == true
     T.usefvg = getParam("usefvg", true)
