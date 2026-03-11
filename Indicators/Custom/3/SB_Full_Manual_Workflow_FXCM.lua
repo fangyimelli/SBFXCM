@@ -11,51 +11,70 @@ local STATEWAITRETEST = 4
 local STATEENTRYWINDOW = 5
 
 local gSource = nil
-local h5 = nil
-local h15 = nil
-local hD = nil
-local streamOHLC5 = {}
-local streamOHLC15 = {}
-local streamOHLCD = {}
 
-local map5to15 = {}
-local map5toD = {}
-local focusStart = nil
-local focusEnd = nil
-local focusKey = nil
+local S = {
+    inited = false,
+    sessionState = STATEWAITASIA,
+    asiaHigh = nil,
+    asiaLow = nil,
+    sweepUsed = false,
+    sweepDir = 0,
+    sweepTime = nil,
+    bosDir = 0,
+    bosLevel = nil,
+    bosTime = nil,
+    fvgUpper = nil,
+    fvgLower = nil,
+    fvgMid = nil,
+    fvgTime = nil,
+    fvgMit = false,
+    retestUpper = nil,
+    retestLower = nil,
+    retestTime = nil,
+    blue1 = false,
+    blue2 = false,
+    blue3 = false,
+    blue1Last = -100000,
+    blue2Last = -100000,
+    blue3Last = -100000,
+    scoreA = 0,
+    scoreAPlus = 0,
+    blockedReason = "",
+    focusDayKey = nil,
+    focusAnchor = nil,
+    todayTradeCount = 0,
+    doneToday = false,
+    entry = nil,
+    tp = nil,
+    sl = nil,
+    currentDayKey = nil,
+    judgeTrace = "",
+}
 
-local inited = false
-local sessionState = STATEWAITASIA
-local asiaHigh = nil
-local asiaLow = nil
-local sweepUsed = false
-local sweepDir = 0
-local sweepTime = nil
-local bosDir = 0
-local bosLevel = nil
-local bosTime = nil
-local fvgU = nil
-local fvgL = nil
-local fvgTime = nil
-local fvgMit = false
-local retU = nil
-local retL = nil
-local retTime = nil
+local H = {
+    h5 = nil,
+    h15 = nil,
+    hD = nil,
+    map5to15 = {},
+    map5toD = {},
+    focusStart = nil,
+    focusEnd = nil,
+    focusKey = nil,
+}
 
-local currentDayKey = nil
-local dailyTrades = 0
-local blockedReason = ""
-local blue1Last = -100000
-local blue2Last = -100000
-local blue3Last = -100000
+local T = {
+    streamOHLC5 = {},
+    streamOHLC15 = {},
+    streamOHLCD = {},
+    out = {},
+}
 
-local ema20 = {}
-local atr5 = {}
-local atr15 = {}
-local atrD = {}
-
-local outAsiaH, outAsiaL, outBos, outFvgU, outFvgL, outRetU, outRetL, outEntry, outTP, outSL, outBlue3
-local outTradeDay, outInNy, outHasBos, outFvgMit, outBlue1, outBlue2, outBlue3State, outScore, outDebug
+local I = {
+    ema20 = {},
+    atr5 = {},
+    atr15 = {},
+    atrD = {},
+}
 
 local function dbg(msg)
     if instance.parameters.debugMode then
@@ -303,8 +322,8 @@ end
 local function emaFallback(arr, period, i)
     if i == 0 then return arr[0] end
     local k = 2 / (period + 1)
-    ema20[i] = arr[i] * k + (ema20[i - 1] or arr[i]) * (1 - k)
-    return ema20[i]
+    I.ema20[i] = arr[i] * k + (I.ema20[i - 1] or arr[i]) * (1 - k)
+    return I.ema20[i]
 end
 
 local function atrFallback(histO, histH, histL, histC, period, outArr, i)
@@ -327,29 +346,44 @@ end
 
 local function isBlockedByDayType(bias)
     if instance.parameters.requireSbDayType and bias == 0 then
-        blockedReason = "Blocked: bias=0"
+        S.blockedReason = "Blocked: bias=0"
         return true
     end
     if instance.parameters.tradeDayOnly and bias == 0 then
-        blockedReason = "Blocked: not TradeDay"
+        S.blockedReason = "Blocked: not TradeDay"
         return true
     end
     return false
 end
 
 local function resetDay()
-    dailyTrades = 0
-    sweepUsed = false
-    sessionState = STATEWAITASIA
-    asiaHigh = nil
-    asiaLow = nil
-    sweepDir = 0
-    bosDir = 0
-    fvgU = nil
-    fvgL = nil
-    fvgMit = false
-    retU = nil
-    retL = nil
+    S.todayTradeCount = 0
+    S.doneToday = false
+    S.sweepUsed = false
+    S.sessionState = STATEWAITASIA
+    S.asiaHigh = nil
+    S.asiaLow = nil
+    S.sweepDir = 0
+    S.sweepTime = nil
+    S.bosDir = 0
+    S.bosLevel = nil
+    S.bosTime = nil
+    S.fvgUpper = nil
+    S.fvgLower = nil
+    S.fvgMid = nil
+    S.fvgTime = nil
+    S.fvgMit = false
+    S.retestUpper = nil
+    S.retestLower = nil
+    S.retestTime = nil
+    S.entry = nil
+    S.tp = nil
+    S.sl = nil
+    S.blue1 = false
+    S.blue2 = false
+    S.blue3 = false
+    S.blockedReason = ""
+    S.judgeTrace = "day-reset"
 end
 
 function Prepare(nameOnly)
@@ -361,76 +395,78 @@ function Prepare(nameOnly)
     local first = gSource:first()
 
     -- Mandatory fixed-argument getHistory signature
-    h5 = safeGetHistory(gSource:instrument(), "m5", 0, 10000)
-    h15 = safeGetHistory(gSource:instrument(), "m15", 0, 10000)
-    hD = safeGetHistory(gSource:instrument(), "D1", 0, 3000)
+    H.h5 = safeGetHistory(gSource:instrument(), "m5", 0, 10000)
+    H.h15 = safeGetHistory(gSource:instrument(), "m15", 0, 10000)
+    H.hD = safeGetHistory(gSource:instrument(), "D1", 0, 3000)
 
-    streamOHLC5.open = safeGetPriceStream(h5, "open")
-    streamOHLC5.high = safeGetPriceStream(h5, "high")
-    streamOHLC5.low = safeGetPriceStream(h5, "low")
-    streamOHLC5.close = safeGetPriceStream(h5, "close")
+    T.streamOHLC5.open = safeGetPriceStream(H.h5, "open")
+    T.streamOHLC5.high = safeGetPriceStream(H.h5, "high")
+    T.streamOHLC5.low = safeGetPriceStream(H.h5, "low")
+    T.streamOHLC5.close = safeGetPriceStream(H.h5, "close")
 
-    streamOHLC15.open = safeGetPriceStream(h15, "open")
-    streamOHLC15.high = safeGetPriceStream(h15, "high")
-    streamOHLC15.low = safeGetPriceStream(h15, "low")
-    streamOHLC15.close = safeGetPriceStream(h15, "close")
+    T.streamOHLC15.open = safeGetPriceStream(H.h15, "open")
+    T.streamOHLC15.high = safeGetPriceStream(H.h15, "high")
+    T.streamOHLC15.low = safeGetPriceStream(H.h15, "low")
+    T.streamOHLC15.close = safeGetPriceStream(H.h15, "close")
 
-    streamOHLCD.open = safeGetPriceStream(hD, "open")
-    streamOHLCD.high = safeGetPriceStream(hD, "high")
-    streamOHLCD.low = safeGetPriceStream(hD, "low")
-    streamOHLCD.close = safeGetPriceStream(hD, "close")
+    T.streamOHLCD.open = safeGetPriceStream(H.hD, "open")
+    T.streamOHLCD.high = safeGetPriceStream(H.hD, "high")
+    T.streamOHLCD.low = safeGetPriceStream(H.hD, "low")
+    T.streamOHLCD.close = safeGetPriceStream(H.hD, "close")
 
-    map5to15 = alignTimeIndex(h5, h15)
-    map5toD = alignTimeIndex(h5, hD)
+    H.map5to15 = alignTimeIndex(H.h5, H.h15)
+    H.map5toD = alignTimeIndex(H.h5, H.hD)
 
-    focusKey = instance.parameters.focusdate
-    if instance.parameters.focusmode and focusKey ~= "" then
-        local t = parseFocusDate(focusKey)
+    H.focusKey = instance.parameters.focusdate
+    if instance.parameters.focusmode and H.focusKey ~= "" then
+        local t = parseFocusDate(H.focusKey)
         if t ~= nil then
-            focusStart = t
-            focusEnd = t + (24 * 60 * 60)
+            H.focusStart = t
+            H.focusEnd = t + (24 * 60 * 60)
+            S.focusAnchor = t
+            S.focusDayKey = dayKey(t)
         end
     end
 
-    outAsiaH = instance:addStream("ASIAH", core.Line, "Asia High", "AsiaH", first)
-    outAsiaL = instance:addStream("ASIAL", core.Line, "Asia Low", "AsiaL", first)
-    outBos = instance:addStream("BOSLV", core.Line, "BOS Level", "BOS", first)
-    outFvgU = instance:addStream("FVGU", core.Line, "FVG Upper", "FVGU", first)
-    outFvgL = instance:addStream("FVGL", core.Line, "FVG Lower", "FVGL", first)
-    outRetU = instance:addStream("RETU", core.Line, "Retest Upper", "RetU", first)
-    outRetL = instance:addStream("RETL", core.Line, "Retest Lower", "RetL", first)
-    outEntry = instance:addStream("ENTRY", core.Line, "Entry", "Entry", first)
-    outTP = instance:addStream("TP", core.Line, "Take Profit", "TP", first)
-    outSL = instance:addStream("SL", core.Line, "Stop Loss", "SL", first)
-    outBlue3 = instance:addStream("BLUE3", core.Dot, "Blue3 Signal", "Blue3", first)
+    T.out.asiaH = instance:addStream("ASIAH", core.Line, "Asia High", "AsiaH", first)
+    T.out.asiaL = instance:addStream("ASIAL", core.Line, "Asia Low", "AsiaL", first)
+    T.out.bos = instance:addStream("BOSLV", core.Line, "BOS Level", "BOS", first)
+    T.out.fvgU = instance:addStream("FVGU", core.Line, "FVG Upper", "FVGU", first)
+    T.out.fvgL = instance:addStream("FVGL", core.Line, "FVG Lower", "FVGL", first)
+    T.out.retU = instance:addStream("RETU", core.Line, "Retest Upper", "RetU", first)
+    T.out.retL = instance:addStream("RETL", core.Line, "Retest Lower", "RetL", first)
+    T.out.entry = instance:addStream("ENTRY", core.Line, "Entry", "Entry", first)
+    T.out.tp = instance:addStream("TP", core.Line, "Take Profit", "TP", first)
+    T.out.sl = instance:addStream("SL", core.Line, "Stop Loss", "SL", first)
+    T.out.blue3 = instance:addStream("BLUE3", core.Dot, "Blue3 Signal", "Blue3", first)
 
-    outTradeDay = instance:addStream("TRADEDAY", core.Line, "TradeDay", "TradeDay", first)
-    outInNy = instance:addStream("INNY", core.Line, "In NY", "InNY", first)
-    outHasBos = instance:addStream("HASBOS", core.Line, "Has BOS", "HasBOS", first)
-    outFvgMit = instance:addStream("FVGMIT", core.Line, "FVG Mit", "FvgMit", first)
-    outBlue1 = instance:addStream("BLUE1", core.Line, "Blue1", "Blue1", first)
-    outBlue2 = instance:addStream("BLUE2", core.Line, "Blue2", "Blue2", first)
-    outBlue3State = instance:addStream("BLUE3S", core.Line, "Blue3State", "Blue3State", first)
-    outScore = instance:addStream("SCORE", core.Line, "Score", "Score", first)
-    outDebug = instance:addStream("DEBUG", core.Line, "Debug", "Debug", first)
+    T.out.tradeDay = instance:addStream("TRADEDAY", core.Line, "TradeDay", "TradeDay", first)
+    T.out.inNy = instance:addStream("INNY", core.Line, "In NY", "InNY", first)
+    T.out.hasBos = instance:addStream("HASBOS", core.Line, "Has BOS", "HasBOS", first)
+    T.out.fvgMit = instance:addStream("FVGMIT", core.Line, "FVG Mit", "FvgMit", first)
+    T.out.blue1 = instance:addStream("BLUE1", core.Line, "Blue1", "Blue1", first)
+    T.out.blue2 = instance:addStream("BLUE2", core.Line, "Blue2", "Blue2", first)
+    T.out.blue3State = instance:addStream("BLUE3S", core.Line, "Blue3State", "Blue3State", first)
+    T.out.score = instance:addStream("SCORE", core.Line, "Score", "Score", first)
+    T.out.debug = instance:addStream("DEBUG", core.Line, "Debug", "Debug", first)
 end
 
 local function computeBias(dIndex)
     if dIndex < 2 then return 0, false, false end
-    local yOpen = streamOHLCD.open[dIndex - 1]
-    local yClose = streamOHLCD.close[dIndex - 1]
-    local yHigh = streamOHLCD.high[dIndex - 1]
-    local yLow = streamOHLCD.low[dIndex - 1]
+    local yOpen = T.streamOHLCD.open[dIndex - 1]
+    local yClose = T.streamOHLCD.close[dIndex - 1]
+    local yHigh = T.streamOHLCD.high[dIndex - 1]
+    local yLow = T.streamOHLCD.low[dIndex - 1]
     local yRange = yHigh - yLow
-    local yAtr = atrFallback(streamOHLCD.open, streamOHLCD.high, streamOHLCD.low, streamOHLCD.close, instance.parameters.dayMoveAtrLen, atrD, dIndex - 1)
+    local yAtr = atrFallback(T.streamOHLCD.open, T.streamOHLCD.high, T.streamOHLCD.low, T.streamOHLCD.close, instance.parameters.dayMoveAtrLen, I.atrD, dIndex - 1)
 
     local dumpYesterday = (yOpen - yClose) >= (yAtr * instance.parameters.dumpPumpMinAtrMult)
     local pumpYesterday = (yClose - yOpen) >= (yAtr * instance.parameters.dumpPumpMinAtrMult)
     local dFgd = dumpYesterday and yRange >= yAtr
     local dFrd = pumpYesterday and yRange >= yAtr
 
-    local p2Open = streamOHLCD.open[dIndex - 2]
-    local p2Close = streamOHLCD.close[dIndex - 2]
+    local p2Open = T.streamOHLCD.open[dIndex - 2]
+    local p2Close = T.streamOHLCD.close[dIndex - 2]
     local p2Dump = (p2Open - p2Close) >= yAtr * instance.parameters.dumpPumpMinAtrMult
     local p2Pump = (p2Close - p2Open) >= yAtr * instance.parameters.dumpPumpMinAtrMult
 
@@ -445,34 +481,35 @@ end
 
 local function visibleForFocus(t)
     if not instance.parameters.focusmode then return true end
-    if focusStart == nil or focusEnd == nil then return false end
-    return t >= focusStart and t < focusEnd
+    if H.focusStart == nil or H.focusEnd == nil then return false end
+    return t >= H.focusStart and t < H.focusEnd
 end
 
 function Update(period, mode)
-    if not inited then inited = true end
+    if not S.inited then S.inited = true end
     if period < 2 then return end
+
+    S.blue1, S.blue2, S.blue3 = false, false, false
+    S.blockedReason = ""
 
     local t5 = gSource:date(period)
     local inFocus = visibleForFocus(t5)
     local inAsia = inSession(t5, instance.parameters.asiaSession)
     local inNy = inSession(t5, instance.parameters.nySession)
-
-    local idx15 = map5to15[period] or 0
-    local idxD = map5toD[period] or 0
+    local idx15 = H.map5to15[period] or 0
+    local idxD = H.map5toD[period] or 0
 
     local o5 = gSource.open[period]
     local h5v = gSource.high[period]
     local l5v = gSource.low[period]
     local c5 = gSource.close[period]
-
-    local a5 = atrFallback(gSource.open, gSource.high, gSource.low, gSource.close, instance.parameters.sweepAtrLen, atr5, period)
+    local a5 = atrFallback(gSource.open, gSource.high, gSource.low, gSource.close, instance.parameters.sweepAtrLen, I.atr5, period)
     local e20 = emaFallback(gSource.close, 20, period)
 
     local dayK = dayKey(t5)
-    if currentDayKey == nil then currentDayKey = dayK end
-    if dayK ~= currentDayKey then
-        currentDayKey = dayK
+    if S.currentDayKey == nil then S.currentDayKey = dayK end
+    if dayK ~= S.currentDayKey then
+        S.currentDayKey = dayK
         resetDay()
     end
 
@@ -480,212 +517,181 @@ function Update(period, mode)
     local dayBlocked = isBlockedByDayType(bias)
 
     if inAsia then
-        asiaHigh = (asiaHigh == nil) and h5v or math.max(asiaHigh, h5v)
-        asiaLow = (asiaLow == nil) and l5v or math.min(asiaLow, l5v)
+        S.asiaHigh = (S.asiaHigh == nil) and h5v or math.max(S.asiaHigh, h5v)
+        S.asiaLow = (S.asiaLow == nil) and l5v or math.min(S.asiaLow, l5v)
     end
-    if instance.parameters.prefilterLock and inNy and sessionState == STATEWAITASIA and asiaHigh ~= nil and asiaLow ~= nil then
-        sessionState = STATEASIAREADY
+    if instance.parameters.prefilterLock and inNy and S.sessionState == STATEWAITASIA and S.asiaHigh ~= nil and S.asiaLow ~= nil then
+        S.sessionState = STATEASIAREADY
     end
 
-    local blue1, blue2, blue3 = false, false, false
-
-    if sessionState >= STATEASIAREADY and not sweepUsed and idx15 >= 1 then
-        local h15v = streamOHLC15.high[idx15]
-        local l15v = streamOHLC15.low[idx15]
-        local c15 = streamOHLC15.close[idx15]
-        local o15 = streamOHLC15.open[idx15]
-        local a15 = atrFallback(streamOHLC15.open, streamOHLC15.high, streamOHLC15.low, streamOHLC15.close, instance.parameters.sweepAtrLen, atr15, idx15)
-        local mintick = pipSize(gSource:instrument())
-        local sweepThreshold = math.max(instance.parameters.sweepMinTicks * mintick, a15 * instance.parameters.sweepMinAtrMult)
-
-        local upSweep = asiaHigh ~= nil and (h15v - asiaHigh) >= sweepThreshold
-        local dnSweep = asiaLow ~= nil and (asiaLow - l15v) >= sweepThreshold
-        local reclaimUp = c15 < asiaHigh or (instance.parameters.manualGrade == "A" and o15 < asiaHigh)
-        local reclaimDn = c15 > asiaLow or (instance.parameters.manualGrade == "A" and o15 > asiaLow)
-
+    if S.sessionState >= STATEASIAREADY and not S.sweepUsed and idx15 >= 1 then
+        local h15v = T.streamOHLC15.high[idx15]
+        local l15v = T.streamOHLC15.low[idx15]
+        local c15 = T.streamOHLC15.close[idx15]
+        local o15 = T.streamOHLC15.open[idx15]
+        local a15 = atrFallback(T.streamOHLC15.open, T.streamOHLC15.high, T.streamOHLC15.low, T.streamOHLC15.close, instance.parameters.sweepAtrLen, I.atr15, idx15)
+        local sweepThreshold = math.max(instance.parameters.sweepMinTicks * pipSize(gSource:instrument()), a15 * instance.parameters.sweepMinAtrMult)
+        local upSweep = S.asiaHigh ~= nil and (h15v - S.asiaHigh) >= sweepThreshold
+        local dnSweep = S.asiaLow ~= nil and (S.asiaLow - l15v) >= sweepThreshold
+        local reclaimUp = c15 < S.asiaHigh or (instance.parameters.manualGrade == "A" and o15 < S.asiaHigh)
+        local reclaimDn = c15 > S.asiaLow or (instance.parameters.manualGrade == "A" and o15 > S.asiaLow)
         if upSweep and reclaimUp then
-            sweepUsed = true
-            sweepDir = 1
-            sweepTime = t5
-            sessionState = STATESWEPT
+            S.sweepUsed, S.sweepDir, S.sweepTime, S.sessionState = true, 1, t5, STATESWEPT
+            S.judgeTrace = "sweep-up"
         elseif dnSweep and reclaimDn then
-            sweepUsed = true
-            sweepDir = -1
-            sweepTime = t5
-            sessionState = STATESWEPT
+            S.sweepUsed, S.sweepDir, S.sweepTime, S.sessionState = true, -1, t5, STATESWEPT
+            S.judgeTrace = "sweep-down"
         end
     end
 
-    if sessionState == STATESWEPT and idx15 >= (instance.parameters.bosSwingLeft + instance.parameters.bosSwingRight + 1) then
-        local hh = streamOHLC15.high[idx15 - 1]
-        local ll = streamOHLC15.low[idx15 - 1]
-        local c15 = streamOHLC15.close[idx15]
-        local h15v = streamOHLC15.high[idx15]
-        local l15v = streamOHLC15.low[idx15]
-        local a15 = atr15[idx15] or atrFallback(streamOHLC15.open, streamOHLC15.high, streamOHLC15.low, streamOHLC15.close, instance.parameters.sweepAtrLen, atr15, idx15)
-
+    if S.sessionState == STATESWEPT and idx15 >= (instance.parameters.bosSwingLeft + instance.parameters.bosSwingRight + 1) then
+        local hh = T.streamOHLC15.high[idx15 - 1]
+        local ll = T.streamOHLC15.low[idx15 - 1]
+        local c15 = T.streamOHLC15.close[idx15]
+        local h15v = T.streamOHLC15.high[idx15]
+        local l15v = T.streamOHLC15.low[idx15]
+        local a15 = I.atr15[idx15] or atrFallback(T.streamOHLC15.open, T.streamOHLC15.high, T.streamOHLC15.low, T.streamOHLC15.close, instance.parameters.sweepAtrLen, I.atr15, idx15)
         local minBos = a15 * ((instance.parameters.manualGrade == "Aplus") and instance.parameters.bosMinAtrMultAplus or instance.parameters.bosMinAtrMultA)
-        if sweepDir == 1 then
+        if S.sweepDir == 1 then
             local broke = ((instance.parameters.manualGrade == "Aplus") and c15 < ll) or (l15v < ll)
             if broke and (ll - l15v) >= minBos then
-                bosDir = -1
-                bosLevel = ll
-                bosTime = t5
-                sessionState = instance.parameters.useFvg and STATEWAITFVG or STATEWAITRETEST
+                S.bosDir, S.bosLevel, S.bosTime = -1, ll, t5
+                S.sessionState = instance.parameters.useFvg and STATEWAITFVG or STATEWAITRETEST
             end
-        elseif sweepDir == -1 then
+        elseif S.sweepDir == -1 then
             local broke = ((instance.parameters.manualGrade == "Aplus") and c15 > hh) or (h15v > hh)
             if broke and (h15v - hh) >= minBos then
-                bosDir = 1
-                bosLevel = hh
-                bosTime = t5
-                sessionState = instance.parameters.useFvg and STATEWAITFVG or STATEWAITRETEST
+                S.bosDir, S.bosLevel, S.bosTime = 1, hh, t5
+                S.sessionState = instance.parameters.useFvg and STATEWAITFVG or STATEWAITRETEST
             end
         end
     end
 
-    if sessionState == STATEWAITFVG and idx15 >= 2 then
-        local lo = streamOHLC15.low[idx15]
-        local hi2 = streamOHLC15.high[idx15 - 2]
-        local hi = streamOHLC15.high[idx15]
-        local lo2 = streamOHLC15.low[idx15 - 2]
-        local a15 = atr15[idx15] or 0
+    if S.sessionState == STATEWAITFVG and idx15 >= 2 then
+        local lo = T.streamOHLC15.low[idx15]
+        local hi2 = T.streamOHLC15.high[idx15 - 2]
+        local hi = T.streamOHLC15.high[idx15]
+        local lo2 = T.streamOHLC15.low[idx15 - 2]
+        local a15 = I.atr15[idx15] or 0
         local minFvg = a15 * ((instance.parameters.manualGrade == "Aplus") and instance.parameters.fvgMinAtrMultAplus or instance.parameters.fvgMinAtrMultA)
-
-        if bosDir == 1 and lo > hi2 and (lo - hi2) >= minFvg then
-            fvgL = hi2
-            fvgU = lo
-            fvgTime = t5
-        elseif bosDir == -1 and hi < lo2 and (lo2 - hi) >= minFvg then
-            fvgL = hi
-            fvgU = lo2
-            fvgTime = t5
+        if S.bosDir == 1 and lo > hi2 and (lo - hi2) >= minFvg then
+            S.fvgLower, S.fvgUpper, S.fvgTime = hi2, lo, t5
+        elseif S.bosDir == -1 and hi < lo2 and (lo2 - hi) >= minFvg then
+            S.fvgLower, S.fvgUpper, S.fvgTime = hi, lo2, t5
         end
-
-        if fvgTime ~= nil then
-            local exp = instance.parameters.fvgExpireMinutes * 60
-            if (t5 - fvgTime) > exp then
-                fvgTime = nil
-                fvgU = nil
-                fvgL = nil
-                sessionState = STATEWAITASIA
-            else
-                if h5v >= fvgL and l5v <= fvgU then
-                    fvgMit = true
-                    sessionState = STATEWAITRETEST
-                end
+        if S.fvgUpper ~= nil and S.fvgLower ~= nil then
+            S.fvgMid = (S.fvgUpper + S.fvgLower) / 2
+        end
+        if S.fvgTime ~= nil then
+            if (t5 - S.fvgTime) > (instance.parameters.fvgExpireMinutes * 60) then
+                S.fvgTime, S.fvgUpper, S.fvgLower, S.fvgMid = nil, nil, nil, nil
+                S.sessionState = STATEWAITASIA
+            elseif h5v >= S.fvgLower and l5v <= S.fvgUpper then
+                S.fvgMit = true
+                S.sessionState = STATEWAITRETEST
             end
         end
     end
 
-    if sessionState == STATEWAITRETEST and bosLevel ~= nil then
-        local a15 = atr15[idx15] or a5
+    if S.sessionState == STATEWAITRETEST and S.bosLevel ~= nil then
+        local a15 = I.atr15[idx15] or a5
         local buff = a15 * ((instance.parameters.manualGrade == "Aplus") and instance.parameters.retestBufferAtrMultAplus or instance.parameters.retestBufferAtrMultA)
         if instance.parameters.retestMode == "BOS" then
-            retU = bosLevel + buff
-            retL = bosLevel - buff
+            S.retestUpper, S.retestLower = S.bosLevel + buff, S.bosLevel - buff
         elseif instance.parameters.retestMode == "Pivot" then
-            retU = bosLevel + buff * 2
-            retL = bosLevel - buff * 2
+            S.retestUpper, S.retestLower = S.bosLevel + buff * 2, S.bosLevel - buff * 2
         else
-            retU = bosLevel + buff * 3
-            retL = bosLevel - buff * 3
+            S.retestUpper, S.retestLower = S.bosLevel + buff * 3, S.bosLevel - buff * 3
         end
-        retTime = retTime or t5
-        local retHit = h5v >= retL and l5v <= retU
-        if retHit then
-            local minsSinceBlue1 = (t5 - blue1Last) / 60
-            if minsSinceBlue1 >= instance.parameters.cooldownBlue1 and not dayBlocked then
-                blue1 = true
-                blue1Last = t5
-                sessionState = STATEENTRYWINDOW
-                if instance.parameters.consumeSlotOn == "Blue1" then
-                    dailyTrades = dailyTrades + 1
-                end
+        S.retestTime = S.retestTime or t5
+        local retHit = h5v >= S.retestLower and l5v <= S.retestUpper
+        if retHit and ((t5 - S.blue1Last) / 60) >= instance.parameters.cooldownBlue1 and not dayBlocked then
+            S.blue1, S.blue1Last, S.sessionState = true, t5, STATEENTRYWINDOW
+            if instance.parameters.consumeSlotOn == "Blue1" then
+                S.todayTradeCount = S.todayTradeCount + 1
             end
         end
-
-        if retTime and (t5 - retTime) > (instance.parameters.entryExpireMinutes * 60) then
-            sessionState = STATEWAITASIA
+        if S.retestTime and (t5 - S.retestTime) > (instance.parameters.entryExpireMinutes * 60) then
+            S.sessionState = STATEWAITASIA
         end
     end
 
-    if sessionState == STATEENTRYWINDOW then
-        local canBlue2 = ((t5 - blue1Last) / 300) <= instance.parameters.reactionWindowBars
-        if canBlue2 then
-            local minsSinceBlue2 = (t5 - blue2Last) / 60
-            if minsSinceBlue2 >= instance.parameters.cooldownBlue2 then
-                local reclaim = (bosDir == 1 and c5 > bosLevel) or (bosDir == -1 and c5 < bosLevel)
-                local rejectOk = (not instance.parameters.enableRejectForBlue2) or wickReject(bosDir, o5, h5v, l5v, c5, instance.parameters.rejectWickRatioMin, instance.parameters.rejectBodyRatioMax)
-                if ((not instance.parameters.requireReclaimForBlue2) or reclaim) and rejectOk then
-                    blue2 = true
-                    blue2Last = t5
-                end
+    if S.sessionState == STATEENTRYWINDOW then
+        local canBlue2 = ((t5 - S.blue1Last) / 300) <= instance.parameters.reactionWindowBars
+        if canBlue2 and ((t5 - S.blue2Last) / 60) >= instance.parameters.cooldownBlue2 then
+            local reclaim = (S.bosDir == 1 and c5 > S.bosLevel) or (S.bosDir == -1 and c5 < S.bosLevel)
+            local rejectOk = (not instance.parameters.enableRejectForBlue2) or wickReject(S.bosDir, o5, h5v, l5v, c5, instance.parameters.rejectWickRatioMin, instance.parameters.rejectBodyRatioMax)
+            if ((not instance.parameters.requireReclaimForBlue2) or reclaim) and rejectOk then
+                S.blue2, S.blue2Last = true, t5
             end
         end
 
-        local minsSinceBlue3 = (t5 - blue3Last) / 60
-        local emaOk = (not instance.parameters.requireEma20ForBlue3) or ((bosDir == 1 and c5 > e20) or (bosDir == -1 and c5 < e20))
-        local dirOk = (instance.parameters.manualGrade ~= "Aplus") or ((bosDir == 1 and c5 > o5) or (bosDir == -1 and c5 < o5))
-        if minsSinceBlue3 >= instance.parameters.cooldownBlue3 and emaOk and dirOk and dailyTrades < instance.parameters.dailyMaxTrades then
-            blue3 = true
-            blue3Last = t5
-            sessionState = STATEWAITASIA
+        local emaOk = (not instance.parameters.requireEma20ForBlue3) or ((S.bosDir == 1 and c5 > e20) or (S.bosDir == -1 and c5 < e20))
+        local dirOk = (instance.parameters.manualGrade ~= "Aplus") or ((S.bosDir == 1 and c5 > o5) or (S.bosDir == -1 and c5 < o5))
+        if ((t5 - S.blue3Last) / 60) >= instance.parameters.cooldownBlue3 and emaOk and dirOk and S.todayTradeCount < instance.parameters.dailyMaxTrades then
+            S.blue3, S.blue3Last, S.sessionState = true, t5, STATEWAITASIA
             if instance.parameters.consumeSlotOn == "Blue3" then
-                dailyTrades = dailyTrades + 1
+                S.todayTradeCount = S.todayTradeCount + 1
             end
-        elseif dailyTrades >= instance.parameters.dailyMaxTrades then
-            blockedReason = "Daily limit reached"
+        elseif S.todayTradeCount >= instance.parameters.dailyMaxTrades then
+            S.blockedReason = "Daily limit reached"
+            S.doneToday = true
         end
     end
 
-    local score = fscore(inNy, sweepUsed, bosLevel ~= nil, fvgMit, blue3)
+    S.scoreA = fscore(inNy, S.sweepUsed, S.bosLevel ~= nil, S.fvgMit, S.blue3)
+    S.scoreAPlus = S.scoreA
+    local score = S.scoreA
     local threshold = (instance.parameters.manualGrade == "Aplus") and instance.parameters.scoreThresholdAplus or instance.parameters.scoreThresholdA
     local displayOk = (not instance.parameters.scoreEnabled) or (score >= threshold and score >= instance.parameters.minScoreToDisplay)
 
     if inFocus and displayOk then
-        outAsiaH[period] = asiaHigh
-        outAsiaL[period] = asiaLow
-        outBos[period] = bosLevel
-        outFvgU[period] = fvgU
-        outFvgL[period] = fvgL
-        outRetU[period] = retU
-        outRetL[period] = retL
-        if blue3 then
-            local entry = c5
+        T.out.asiaH[period] = S.asiaHigh
+        T.out.asiaL[period] = S.asiaLow
+        T.out.bos[period] = S.bosLevel
+        T.out.fvgU[period] = S.fvgUpper
+        T.out.fvgL[period] = S.fvgLower
+        T.out.retU[period] = S.retestUpper
+        T.out.retL[period] = S.retestLower
+        if S.blue3 then
             local pip = pipSize(gSource:instrument())
-            local tp = entry + (bosDir * instance.parameters.targetPips * pip)
-            local sl = entry - (bosDir * instance.parameters.slPipsDefault * pip)
-            outEntry[period] = entry
-            outTP[period] = tp
-            outSL[period] = sl
-            outBlue3[period] = entry
+            S.entry = c5
+            S.tp = S.entry + (S.bosDir * instance.parameters.targetPips * pip)
+            S.sl = S.entry - (S.bosDir * instance.parameters.slPipsDefault * pip)
+            T.out.entry[period] = S.entry
+            T.out.tp[period] = S.tp
+            T.out.sl[period] = S.sl
+            T.out.blue3[period] = S.entry
         end
     end
 
     if instance.parameters.showhud and inFocus then
-        outTradeDay[period] = tradeDay and 1 or 0
-        outInNy[period] = inNy and 1 or 0
-        outHasBos[period] = (bosLevel ~= nil) and 1 or 0
-        outFvgMit[period] = fvgMit and 1 or 0
-        outBlue1[period] = blue1 and 1 or 0
-        outBlue2[period] = blue2 and 1 or 0
-        outBlue3State[period] = blue3 and 1 or 0
-        outScore[period] = score
-        if blockedReason == "Daily limit reached" then
-            outDebug[period] = -1
+        T.out.tradeDay[period] = tradeDay and 1 or 0
+        T.out.inNy[period] = inNy and 1 or 0
+        T.out.hasBos[period] = (S.bosLevel ~= nil) and 1 or 0
+        T.out.fvgMit[period] = S.fvgMit and 1 or 0
+        T.out.blue1[period] = S.blue1 and 1 or 0
+        T.out.blue2[period] = S.blue2 and 1 or 0
+        T.out.blue3State[period] = S.blue3 and 1 or 0
+        T.out.score[period] = score
+        if S.blockedReason == "Daily limit reached" then
+            T.out.debug[period] = -1
         elseif dayBlocked then
-            outDebug[period] = -2
+            T.out.debug[period] = -2
         else
-            outDebug[period] = 0
+            T.out.debug[period] = 0
         end
     end
 
     if instance.parameters.focusmode and inFocus == false and instance.parameters.debugMode then
-        outDebug[period] = -9
+        T.out.debug[period] = -9
     end
 
-    if instance.parameters.focusmode and focusStart ~= nil and inNy and inFocus and instance.parameters.debugMode then
-        dbg("Focus " .. focusKey .. " active; day=" .. tostring(dayK) .. ", trades=" .. tostring(dailyTrades) .. ", score=" .. tostring(score))
+    if instance.parameters.focusmode and H.focusStart ~= nil and inNy and inFocus and instance.parameters.debugMode then
+        dbg("Focus " .. H.focusKey .. " active; day=" .. tostring(dayK) .. ", trades=" .. tostring(S.todayTradeCount) .. ", score=" .. tostring(score))
     end
+end
+
+function ReleaseInstance()
+    S.inited = false
 end

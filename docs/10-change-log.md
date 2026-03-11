@@ -1,6 +1,16 @@
 # 10-change-log
 
 ## 2026-03-11
+- 修正 `SB_Full_Manual_Workflow_FXCM.lua` 匯入錯誤：`function at line XXX has more than 60 upvalues`。
+- 結構重整為單一真實來源（SSOT）容器：
+  - `S`：策略 state（asia/sweep/bos/fvg/retest/blue/score/block/trade count/entry-tp-sl）
+  - `H`：history + map + focus
+  - `T`：stream handles
+  - `I`：EMA/ATR cache
+- `Update()` 改為 table-based state 存取，移除大量獨立 local strategy state upvalue 捕捉。
+- 新增判定紀錄欄位 `S.judgeTrace` 與 HUD/debug 對齊顯示（可回答/阻擋狀態）。
+- 補充狀態機狀態表到 README，明確由 state/gate 決定行為，避免 UI 直接決定系統行為。
+- 新增回歸規則 `RG-009`（上值限制）確保後續不回歸。
 - 文件層級完成四檔拆分規格（DayType / Structure / Entry / HUD），並補齊建議載入順序與欄位責任邊界。
 - 狀態機敘述統一為單一路徑：`DayType -> Structure -> Entry`；HUD 僅做顯示與診斷，不再承擔 gate 決策。
 - gate 決策文件化整併：

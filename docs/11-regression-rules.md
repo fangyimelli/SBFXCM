@@ -46,3 +46,8 @@
    - 回歸規則：`getHistory` 固定參數順序、`addStream` 第五參數為 number。
    - 驗證方式：在目標平台重新編譯/載入。
    - 預期結果：無 Add Indicator 參數錯誤。
+
+9. **RG-009 | Update upvalues 超過 Lua 限制導致匯入失敗**
+   - 回歸規則：策略狀態必須集中在 `S`，不得恢復大量分散 local state 讓 `Update()` 捕捉 >60 upvalues。
+   - 驗證方式：在 FXCM Trading Station / Marketscope 2.0 重新匯入 `SB_Full_Manual_Workflow_FXCM.lua`。
+   - 預期結果：匯入成功，且不再出現 `function at line XXX has more than 60 upvalues`。

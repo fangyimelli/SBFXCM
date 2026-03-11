@@ -1,5 +1,28 @@
 # PR Notes
 
+## 本次修正主題
+- 修正 FXCM 匯入錯誤：`function at line 452 has more than 60 upvalues`。
+- 以「不改商業邏輯、先通過匯入」為優先，將策略狀態整併為 table-based SSOT。
+
+## 主要調整
+- `Indicators/Custom/3/SB_Full_Manual_Workflow_FXCM.lua`
+  - 新增 `S`：策略狀態容器（Asia/Sweep/BOS/FVG/Retest/Blue/Score/Block/focus/trade/targets）。
+  - 新增 `H`：history/map/focus 容器。
+  - 新增 `T`：stream handle 容器。
+  - 新增 `I`：EMA/ATR cache 容器。
+  - `Prepare()`、`Update()`、`ReleaseInstance()` 改為 table 存取（`S.xxx` 等），降低 `Update()` upvalue 捕捉數。
+  - 新增 `S.judgeTrace` 每次 bar 的判定紀錄字串（便於 debug 追蹤）。
+
+## 相容性與風險
+- 未新增外部依賴。
+- 既有參數名稱與 stream id 維持不變。
+- 商業邏輯流程仍為原先 gate：Asia -> Sweep -> BOS -> FVG -> Retest -> Blue。
+
+## 可驗證結果
+1. 在 Marketscope 2.0 匯入 `SB_Full_Manual_Workflow_FXCM.lua`。
+2. 預期不再出現 `function at line XXX has more than 60 upvalues`。
+3. `DEBUG` 仍可反映 gate 狀態（0/-1/-2/-9），且 focus/debug 顯示正常。
+
 ## 衝突邏輯整併 / 淘汰決策
 
 ### 1) Gate 判斷多點覆寫 -> 保留單一路徑

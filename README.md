@@ -59,12 +59,18 @@
   - `inited`, `map5to15`, `map5toD`（時間對齊）
 
 ## Removed / Deprecated Log
+- 2026-03-11：移除 `SB_Full_Manual_Workflow_FXCM.lua` 內大量分散 local strategy state（`asiaHigh/asiaLow/sweepDir/...`）；整併到 `S`（state SSOT）、`H`（history/map/focus）、`T`（streams）、`I`（ATR/EMA cache）容器，避免 `Update()` 捕捉過多 upvalues。
 - `SB_Full_Manual_Workflow_FXCM.lua`（舊單檔部署形式）標記為 **legacy-compatible**，文件層級改以四檔流程管理。
 - 舊邏輯中重複 gate 判斷路徑已合併為單一路徑（DayType -> Structure -> Entry），避免互斥條件在不同區塊重複覆寫。
 - `lineLifecycle` 仍保留為相容參數，但目前僅作設定保留，不作策略線段回收控制（deprecated behavior）。
 
 ## SSOT 與 debug 欄位變更紀錄
 - **SSOT 政策**：交易狀態機規則以單一流程定義（DayType -> Structure -> Entry），HUD 僅消費上游結果，不回寫策略狀態。
+- **State Table（本次）**：
+  - `S`：策略狀態（Asia/Sweep/BOS/FVG/Retest/Blue/Score/Block/TradeCount/EntryTP_SL）
+  - `H`：history 與跨週期 map、focus 視窗（`h5/h15/hD/map5to15/map5toD/focusStart/focusEnd/focusKey`）
+  - `T`：stream handle 與輸出
+  - `I`：EMA/ATR fallback cache
 - **Debug 欄位**：
   - `DEBUG = 0`：可評估/可交易
   - `DEBUG = -1`：達到 `dailyMaxTrades`
@@ -89,3 +95,13 @@
 
 ## 回歸規則（摘要）
 完整清單見 `docs/11-regression-rules.md`，每次修正 bug 需新增「Bug-ID -> 規則 -> 驗證命令/步驟 -> 預期結果」一條對應。
+
+## 狀態表（SB_Full_Manual_Workflow_FXCM.lua）
+| Gate State | 代碼 | 進入條件 | 離開條件 |
+|---|---:|---|---|
+| WAIT_ASIA | 0 | 新交易日初始化 | NY prefilter lock + Asia range ready |
+| ASIA_READY | 1 | `S.asiaHigh/S.asiaLow` 已建立 | Sweep 成立 |
+| SWEPT | 2 | Sweep + reclaim 成立 | BOS 成立 |
+| WAIT_FVG | 3 | BOS 後且 `useFvg=true` | FVG mitigated 或過期重置 |
+| WAIT_RETEST | 4 | BOS（或 FVG Mit 後） | retest hit -> entry window / 超時重置 |
+| ENTRY_WINDOW | 5 | Blue1 已觸發 | Blue3 成功或條件重置 |
