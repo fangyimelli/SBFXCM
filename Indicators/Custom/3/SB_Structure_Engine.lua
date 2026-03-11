@@ -1,5 +1,5 @@
--- SB Structure Engine (Skeleton)
--- Standalone module extracted from SB_Full_Manual_Workflow_FXCM logic.
+-- SB Structure Engine
+-- Keep only: 5m Asia range + 15m Sweep + 15m BOS, state capped at BOS.
 
 local NAME = "SB Structure Engine"
 
@@ -8,41 +8,30 @@ local STAGE = {
     ASIAREADY = 1,
     SWEPT = 2,
     BOS = 3,
-    WAITFVG = 4,
-    WAITMIT = 5,
-    WAITRET = 6,
-    BLUE1 = 7,
-    BLUE2 = 8,
-    BLUE3 = 9,
-    DONE = 10,
 }
 
 local source = nil
+local outAsiaH, outAsiaL, outBos, outState, outSweepDir = nil, nil, nil, nil, nil
+
 local state = {
     stage = STAGE.IDLE,
-    bias = 0,
-    sweepDir = 0,
-    bosDir = 0,
     asiaHigh = nil,
     asiaLow = nil,
-    hasSweep = false,
-    hasBos = false,
+    sweepDir = 0,
+    bosDir = 0,
     bosLevel = nil,
-    fvgUpper = nil,
-    fvgLower = nil,
-    gate = {
-        gateReason = "init",
-        gateType = "system",
-        decisionTs = nil,
-        decisionDayKey = nil,
-    },
+    lastDayKey = nil,
 }
 
-local outAsiaH = nil
-local outAsiaL = nil
-local outBos = nil
-local outFvgU = nil
-local outFvgL = nil
+local agg15 = {
+    bucket = nil,
+    o = nil,
+    h = nil,
+    l = nil,
+    c = nil,
+}
+
+local last15 = nil
 
 local function parseHHMM(hhmm)
     local digits = tostring(hhmm or "0000")
@@ -80,98 +69,120 @@ local function dayKey(ts)
     return (d.year * 10000) + (d.month * 100) + d.day
 end
 
-local function normalizeDir(v)
-    if v == nil then
-        return 0
-    end
-    if v > 0 then
-        return 1
-    end
-    if v < 0 then
-        return -1
-    end
-    return 0
+local function resetDay()
+    state.stage = STAGE.IDLE
+    state.asiaHigh = nil
+    state.asiaLow = nil
+    state.sweepDir = 0
+    state.bosDir = 0
+    state.bosLevel = nil
+    agg15.bucket, agg15.o, agg15.h, agg15.l, agg15.c = nil, nil, nil, nil, nil
+    last15 = nil
 end
 
-local function recordDecision(ts, gateType, gateReason)
-    state.gate.gateType = gateType
-    state.gate.gateReason = gateReason
-    state.gate.decisionTs = ts
-    state.gate.decisionDayKey = dayKey(ts)
+local function onClosed15(bar)
+    if state.asiaHigh ~= nil and state.asiaLow ~= nil and state.stage == STAGE.IDLE then
+        state.stage = STAGE.ASIAREADY
+    end
+
+    if state.stage == STAGE.ASIAREADY and state.sweepDir == 0 then
+        local upSweep = (bar.h > state.asiaHigh) and (bar.c < state.asiaHigh)
+        local dnSweep = (bar.l < state.asiaLow) and (bar.c > state.asiaLow)
+        if upSweep then
+            state.sweepDir = 1
+            state.stage = STAGE.SWEPT
+        elseif dnSweep then
+            state.sweepDir = -1
+            state.stage = STAGE.SWEPT
+        end
+    end
+
+    if state.stage == STAGE.SWEPT and last15 ~= nil and state.bosLevel == nil then
+        if state.sweepDir == 1 and bar.l < last15.l and bar.c < last15.l then
+            state.bosDir = -1
+            state.bosLevel = last15.l
+            state.stage = STAGE.BOS
+        elseif state.sweepDir == -1 and bar.h > last15.h and bar.c > last15.h then
+            state.bosDir = 1
+            state.bosLevel = last15.h
+            state.stage = STAGE.BOS
+        end
+    end
+
+    last15 = bar
+end
+
+local function update15(ts, o, h, l, c)
+    local bucket = math.floor(ts / (15 * 60))
+    if agg15.bucket == nil then
+        agg15.bucket, agg15.o, agg15.h, agg15.l, agg15.c = bucket, o, h, l, c
+        return
+    end
+    if bucket ~= agg15.bucket then
+        onClosed15({ o = agg15.o, h = agg15.h, l = agg15.l, c = agg15.c, ts = ts })
+        agg15.bucket, agg15.o, agg15.h, agg15.l, agg15.c = bucket, o, h, l, c
+        return
+    end
+    agg15.h = math.max(agg15.h, h)
+    agg15.l = math.min(agg15.l, l)
+    agg15.c = c
 end
 
 function Init()
     indicator:name(NAME)
-    indicator:description("Skeleton: session sweep / BOS / FVG state machine")
+    indicator:description("5m Asia range + 15m sweep/BOS only")
     indicator:requiredSource(core.Bar)
     indicator:type(core.Indicator)
 
     indicator.parameters:addGroup("Sessions")
     indicator.parameters:addString("asiaSession", "Asia Session", "2000-0000")
-
-    indicator.parameters:addGroup("Debug")
-    indicator.parameters:addBoolean("debugMode", "Debug Mode", false)
-end
-
-local function dbg(msg)
-    if instance.parameters.debugMode then
-        core.host:trace(NAME .. " | " .. msg)
-    end
 end
 
 function Prepare(nameOnly)
     source = instance.source
     instance:name(NAME)
-    if nameOnly then
-        return
-    end
+    if nameOnly then return end
 
     local first = source:first()
     outAsiaH = instance:addStream("ASIAH", core.Line, "Asia High", "AsiaH", first)
     outAsiaL = instance:addStream("ASIAL", core.Line, "Asia Low", "AsiaL", first)
-    outBos = instance:addStream("BOS", core.Line, "BOS", "BOS", first)
-    outFvgU = instance:addStream("FVGU", core.Line, "FVG Upper", "FVGU", first)
-    outFvgL = instance:addStream("FVGL", core.Line, "FVG Lower", "FVGL", first)
+    outBos = instance:addStream("BOSLEVEL", core.Line, "BOS Level", "BOS", first)
+    outState = instance:addStream("STATEDEBUG", core.Line, "State", "State", first)
+    outSweepDir = instance:addStream("SWEEPDIR", core.Line, "Sweep Dir", "Sweep", first)
 end
 
 function Update(period, mode)
-    if period < source:first() then
-        return
-    end
+    if period < source:first() then return end
 
     local t = source:date(period)
+    local o = source.open[period]
     local h = source.high[period]
     local l = source.low[period]
+    local c = source.close[period]
 
-    state.bias = normalizeDir(state.bias)
-    state.sweepDir = normalizeDir(state.sweepDir)
-    state.bosDir = normalizeDir(state.bosDir)
+    local dk = dayKey(t)
+    if state.lastDayKey == nil then
+        state.lastDayKey = dk
+    elseif state.lastDayKey ~= dk then
+        state.lastDayKey = dk
+        resetDay()
+    end
 
     if inSession(t, instance.parameters.asiaSession) then
         state.asiaHigh = (state.asiaHigh == nil) and h or math.max(state.asiaHigh, h)
         state.asiaLow = (state.asiaLow == nil) and l or math.min(state.asiaLow, l)
     end
 
-    recordDecision(t, "input", "structure_update")
+    update15(t, o, h, l, c)
 
-    -- TODO: migrate sweep/BOS/FVG detection logic.
     outAsiaH[period] = state.asiaHigh
     outAsiaL[period] = state.asiaLow
     outBos[period] = state.bosLevel
-    outFvgU[period] = state.fvgUpper
-    outFvgL[period] = state.fvgLower
-end
-
-function AsyncOperationFinished(cookie, success, message, message1, message2)
-    -- Intentionally empty: this skeleton currently does not use async history requests.
-    dbg(string.format("AsyncOperationFinished(cookie=%s, success=%s)", tostring(cookie), tostring(success)))
+    outState[period] = state.stage
+    outSweepDir[period] = state.sweepDir
 end
 
 function ReleaseInstance()
-    outAsiaH = nil
-    outAsiaL = nil
-    outBos = nil
-    outFvgU = nil
-    outFvgL = nil
+    outAsiaH, outAsiaL, outBos, outState, outSweepDir = nil, nil, nil, nil, nil
     source = nil
 end
