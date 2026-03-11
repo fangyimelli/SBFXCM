@@ -51,3 +51,13 @@
    - 回歸規則：策略狀態必須集中在 `S`，不得恢復大量分散 local state 讓 `Update()` 捕捉 >60 upvalues。
    - 驗證方式：在 FXCM Trading Station / Marketscope 2.0 重新匯入 `SB_Full_Manual_Workflow_FXCM.lua`。
    - 預期結果：匯入成功，且不再出現 `function at line XXX has more than 60 upvalues`。
+
+10. **RG-010 | 參數 id 不一致導致匯入失敗**
+   - 回歸規則：`Init()` 宣告與 `Prepare()/Update()` 讀取參數 id 必須完全一致，且僅使用英數字。
+   - 驗證方式：檢查 `SB_Full_Manual_Workflow_FXCM.lua` 中參數讀取清單是否僅含 `debug/dayatrlen/dumppumpatrm`，並逐一對照 `Init()`。
+   - 預期結果：無 `The parameter with the specified id does not exist`。
+
+11. **RG-011 | Init 外呼叫 indicator 導致 nil**
+   - 回歸規則：`indicator:*` 與 `indicator.parameters:*` 僅允許出現在 `Init()`。
+   - 驗證方式：靜態掃描 `SB_Full_Manual_Workflow_FXCM.lua`，確認 `Init()` 外無 `indicator.` 呼叫。
+   - 預期結果：無 `attempt to index global 'indicator' (a nil value)`。
