@@ -3,11 +3,34 @@
 
 local NAME = "SB DayType FRD FGD"
 
+local STAGE = {
+    IDLE = 0,
+    ASIAREADY = 1,
+    SWEPT = 2,
+    BOS = 3,
+    WAITFVG = 4,
+    WAITMIT = 5,
+    WAITRET = 6,
+    BLUE1 = 7,
+    BLUE2 = 8,
+    BLUE3 = 9,
+    DONE = 10,
+}
+
 local source = nil
 local state = {
     dayKey = nil,
     bias = 0,
+    sweepDir = 0,
+    bosDir = 0,
     isTradeDay = false,
+    stage = STAGE.IDLE,
+    gate = {
+        gateReason = "init",
+        gateType = "system",
+        decisionTs = nil,
+        decisionDayKey = nil,
+    },
 }
 
 local outBias = nil
@@ -22,6 +45,26 @@ end
 local function dayKey(ts)
     local d = core.dateToTable(ts)
     return (d.year * 10000) + (d.month * 100) + d.day
+end
+
+local function normalizeDir(v)
+    if v == nil then
+        return 0
+    end
+    if v > 0 then
+        return 1
+    end
+    if v < 0 then
+        return -1
+    end
+    return 0
+end
+
+local function recordDecision(ts, gateType, gateReason)
+    state.gate.gateType = gateType
+    state.gate.gateReason = gateReason
+    state.gate.decisionTs = ts
+    state.gate.decisionDayKey = dayKey(ts)
 end
 
 function Init()
@@ -61,7 +104,13 @@ function Update(period, mode)
         state.dayKey = key
         state.bias = 0
         state.isTradeDay = false
+        state.stage = STAGE.IDLE
     end
+
+    state.bias = normalizeDir(state.bias)
+    state.sweepDir = normalizeDir(state.sweepDir)
+    state.bosDir = normalizeDir(state.bosDir)
+    recordDecision(t, "input", "daytype_update")
 
     -- TODO: migrate complete FRD/FGD classification logic from monolith.
     outBias[period] = state.bias
