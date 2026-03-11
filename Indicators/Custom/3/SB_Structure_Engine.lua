@@ -3,8 +3,26 @@
 
 local NAME = "SB Structure Engine"
 
+local STAGE = {
+    IDLE = 0,
+    ASIAREADY = 1,
+    SWEPT = 2,
+    BOS = 3,
+    WAITFVG = 4,
+    WAITMIT = 5,
+    WAITRET = 6,
+    BLUE1 = 7,
+    BLUE2 = 8,
+    BLUE3 = 9,
+    DONE = 10,
+}
+
 local source = nil
 local state = {
+    stage = STAGE.IDLE,
+    bias = 0,
+    sweepDir = 0,
+    bosDir = 0,
     asiaHigh = nil,
     asiaLow = nil,
     hasSweep = false,
@@ -12,6 +30,12 @@ local state = {
     bosLevel = nil,
     fvgUpper = nil,
     fvgLower = nil,
+    gate = {
+        gateReason = "init",
+        gateType = "system",
+        decisionTs = nil,
+        decisionDayKey = nil,
+    },
 }
 
 local outAsiaH = nil
@@ -49,6 +73,31 @@ local function inSession(ts, sess)
         return v >= x and v <= y
     end
     return v >= x or v <= y
+end
+
+local function dayKey(ts)
+    local d = core.dateToTable(ts)
+    return (d.year * 10000) + (d.month * 100) + d.day
+end
+
+local function normalizeDir(v)
+    if v == nil then
+        return 0
+    end
+    if v > 0 then
+        return 1
+    end
+    if v < 0 then
+        return -1
+    end
+    return 0
+end
+
+local function recordDecision(ts, gateType, gateReason)
+    state.gate.gateType = gateType
+    state.gate.gateReason = gateReason
+    state.gate.decisionTs = ts
+    state.gate.decisionDayKey = dayKey(ts)
 end
 
 function Init()
@@ -94,10 +143,16 @@ function Update(period, mode)
     local h = source.high[period]
     local l = source.low[period]
 
+    state.bias = normalizeDir(state.bias)
+    state.sweepDir = normalizeDir(state.sweepDir)
+    state.bosDir = normalizeDir(state.bosDir)
+
     if inSession(t, instance.parameters.asiaSession) then
         state.asiaHigh = (state.asiaHigh == nil) and h or math.max(state.asiaHigh, h)
         state.asiaLow = (state.asiaLow == nil) and l or math.min(state.asiaLow, l)
     end
+
+    recordDecision(t, "input", "structure_update")
 
     -- TODO: migrate sweep/BOS/FVG detection logic.
     outAsiaH[period] = state.asiaHigh

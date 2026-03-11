@@ -3,13 +3,37 @@
 
 local NAME = "SB Trade Manager HUD"
 
+local STAGE = {
+    IDLE = 0,
+    ASIAREADY = 1,
+    SWEPT = 2,
+    BOS = 3,
+    WAITFVG = 4,
+    WAITMIT = 5,
+    WAITRET = 6,
+    BLUE1 = 7,
+    BLUE2 = 8,
+    BLUE3 = 9,
+    DONE = 10,
+}
+
 local source = nil
 local state = {
+    stage = STAGE.IDLE,
+    bias = 0,
+    sweepDir = 0,
+    bosDir = 0,
     entry = nil,
     takeProfit = nil,
     stopLoss = nil,
     dailyTrades = 0,
     blocked = false,
+    gate = {
+        gateReason = "init",
+        gateType = "system",
+        decisionTs = nil,
+        decisionDayKey = nil,
+    },
 }
 
 local outEntry = nil
@@ -22,6 +46,31 @@ local function dbg(msg)
     if instance.parameters.debugMode then
         core.host:trace(NAME .. " | " .. msg)
     end
+end
+
+local function dayKey(ts)
+    local d = core.dateToTable(ts)
+    return (d.year * 10000) + (d.month * 100) + d.day
+end
+
+local function normalizeDir(v)
+    if v == nil then
+        return 0
+    end
+    if v > 0 then
+        return 1
+    end
+    if v < 0 then
+        return -1
+    end
+    return 0
+end
+
+local function recordDecision(ts, gateType, gateReason)
+    state.gate.gateType = gateType
+    state.gate.gateReason = gateReason
+    state.gate.decisionTs = ts
+    state.gate.decisionDayKey = dayKey(ts)
 end
 
 function Init()
@@ -61,7 +110,13 @@ function Update(period, mode)
         return
     end
 
-    state.blocked = state.dailyTrades >= instance.parameters.dailyMaxTrades
+    local t = source:date(period)
+    state.bias = normalizeDir(state.bias)
+    state.sweepDir = normalizeDir(state.sweepDir)
+    state.bosDir = normalizeDir(state.bosDir)
+
+    -- HUD is output-only: blocked status should be derived by upstream logic.
+    recordDecision(t, "render", "hud_output_refresh")
 
     -- TODO: migrate TP/SL lifecycle, slot-consumption and HUD logic.
     outEntry[period] = state.entry
