@@ -207,6 +207,74 @@ local function safeAddStream(id, style, label, color, firstPeriod)
     return stream, nil
 end
 
+local function emptyStreamValue()
+    return nil
+end
+
+local function normalizeStreamValue(value)
+    if value == nil then
+        return emptyStreamValue()
+    end
+    if type(value) == "number" and value ~= value then
+        return emptyStreamValue()
+    end
+    return value
+end
+
+local function isTriggerOnPeriod(triggerMark, period)
+    if triggerMark == nil or period == nil then
+        return false
+    end
+    if triggerMark == period then
+        return true
+    end
+    if source == nil or source.date == nil then
+        return false
+    end
+    local ts = source:date(period)
+    if ts == nil then
+        return false
+    end
+    return triggerMark == ts
+end
+
+local function writeEntryStreams(period)
+    if T.fvgu ~= nil then
+        T.fvgu[period] = normalizeStreamValue(S.fvgUpper)
+    end
+    if T.fvgl ~= nil then
+        T.fvgl[period] = normalizeStreamValue(S.fvgLower)
+    end
+    if T.retu ~= nil then
+        T.retu[period] = normalizeStreamValue(S.retestUpper)
+    end
+    if T.retl ~= nil then
+        T.retl[period] = normalizeStreamValue(S.retestLower)
+    end
+
+    local closePrice = source ~= nil and source.close[period] or nil
+    local blue1Value = isTriggerOnPeriod(S.blue1Time, period) and closePrice or emptyStreamValue()
+    local blue2Value = isTriggerOnPeriod(S.blue2Time, period) and closePrice or emptyStreamValue()
+    local blue3Value = isTriggerOnPeriod(S.blue3Time, period) and closePrice or emptyStreamValue()
+
+    if T.blue1 ~= nil then
+        T.blue1[period] = normalizeStreamValue(blue1Value)
+    end
+    if T.blue2 ~= nil then
+        T.blue2[period] = normalizeStreamValue(blue2Value)
+    end
+    if T.blue3 ~= nil then
+        T.blue3[period] = normalizeStreamValue(blue3Value)
+    end
+    if T.statedebug ~= nil then
+        T.statedebug[period] = normalizeStreamValue(S.state)
+    end
+
+    if T.fvgmid ~= nil then
+        T.fvgmid[period] = normalizeStreamValue(S.fvgMid)
+    end
+end
+
 local function inCooldown(lastPeriod, cooldownBars, nowPeriod)
     if lastPeriod == nil or cooldownBars == nil or cooldownBars <= 0 or nowPeriod == nil then
         return false
@@ -326,6 +394,17 @@ function Prepare(nameOnly)
     T.cdblue3 = getParam("cdblue3", 0)
     T.reqema20b3 = getParam("reqema20b3", false)
 
+    T.fvgu = safeAddStream("fvgu", core.Line, "FVG Upper", core.rgb(0, 206, 209), first)
+    T.fvgl = safeAddStream("fvgl", core.Line, "FVG Lower", core.rgb(0, 139, 139), first)
+    T.retu = safeAddStream("retu", core.Line, "Retest Upper", core.rgb(255, 165, 0), first)
+    T.retl = safeAddStream("retl", core.Line, "Retest Lower", core.rgb(255, 140, 0), first)
+    T.blue1 = safeAddStream("blue1", core.Line, "Blue 1", core.rgb(30, 144, 255), first)
+    T.blue2 = safeAddStream("blue2", core.Line, "Blue 2", core.rgb(65, 105, 225), first)
+    T.blue3 = safeAddStream("blue3", core.Line, "Blue 3", core.rgb(0, 0, 255), first)
+    T.statedebug = safeAddStream("statedebug", core.Line, "State", core.rgb(138, 43, 226), first)
+    -- Optional stream: enable when runtime stability is confirmed.
+    T.fvgmid = nil
+
     local instrument = source ~= nil and source:instrument() or nil
     local isBid = source ~= nil and source:isBid() or true
 
@@ -386,16 +465,19 @@ function Update(period, mode)
 
     if H.m5 == nil or H.m15 == nil then
         block("mtf_dependency_missing")
+        writeEntryStreams(period)
         return
     end
 
     if I.ema20m5 == nil then
         block("ema20m5_unavailable")
+        writeEntryStreams(period)
         return
     end
 
     if I.atr15 == nil then
         block("atr15_unavailable")
+        writeEntryStreams(period)
         return
     end
 
@@ -404,9 +486,12 @@ function Update(period, mode)
         local atr = calcATR(H.m15, idx, 14)
         if atr == nil then
             block("atr15_fallback_not_ready")
+            writeEntryStreams(period)
             return
         end
     end
+
+    writeEntryStreams(period)
 end
 
 function ReleaseInstance()
