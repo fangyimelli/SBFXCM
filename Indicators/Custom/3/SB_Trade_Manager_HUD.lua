@@ -480,8 +480,25 @@ local function writeManagerStreams(period)
 end
 
 function Prepare(nameOnly)
+    trace("Prepare start")
+
+    if instance == nil then
+        trace("instance missing")
+        return
+    end
+
     S.source = instance.source
+    if S.source == nil then
+        trace("source failed")
+        return
+    end
+    trace("source ok")
+
     S.first = S.source:first()
+    if S.first == nil then
+        trace("first failed")
+        return
+    end
 
     instance:name(profile:id() .. "(" .. S.source:name() .. ")")
 
@@ -513,6 +530,7 @@ function Prepare(nameOnly)
     T.showhud = instance.parameters.showhud
     S.debugmode = instance.parameters.debugmode
     S.debug = instance.parameters.debug
+    trace("parameters ok")
 
     T.nysession = "0930-1600"
     T.pip = pipSize(S.source:instrument())
@@ -540,11 +558,35 @@ function Prepare(nameOnly)
     T.streams.hud_blocked = safeAddStream("hud_blocked", HUD_STRING_STYLE, "HUD Blocked", core.rgb(255, 99, 71), S.first)
     T.streams.hud_focus = safeAddStream("hud_focus", HUD_STRING_STYLE, "HUD Focus", core.rgb(255, 140, 0), S.first)
 
+    if T.streams.entrystream ~= nil and T.streams.tpstream ~= nil and T.streams.slstream ~= nil and T.streams.scorestream ~= nil and T.streams.tradectstream ~= nil and T.streams.displayokstream ~= nil and T.streams.focusstream ~= nil and T.streams.hudstate ~= nil and T.streams.blockedstream ~= nil and T.streams.hud_trade ~= nil and T.streams.hud_score ~= nil and T.streams.hud_targets ~= nil and T.streams.hud_blocked ~= nil and T.streams.hud_focus ~= nil then
+        trace("streams ok")
+    else
+        trace("streams failed")
+    end
+
     H.m5 = safeGetHistory(S.source:instrument(), "m5", S.source:isBid())
     H.m15 = safeGetHistory(S.source:instrument(), "m15", S.source:isBid())
     H.d1 = safeGetHistory(S.source:instrument(), "D1", S.source:isBid())
 
+    if H.m5 ~= nil and H.m15 ~= nil and H.d1 ~= nil then
+        trace("history ok")
+    else
+        trace("history failed")
+        if H.m5 == nil then
+            trace("failed to create m5 history")
+        end
+        if H.m15 == nil then
+            trace("failed to create m15 history")
+        end
+        if H.d1 == nil then
+            trace("failed to create d1 history")
+        end
+    end
+
     I.ema20m5 = safeGetPriceStream(H.m5, "close")
+    if I.ema20m5 == nil then
+        trace("failed to create ema20m5")
+    end
 
     resetForNewDay(S.source:date(S.first))
     S.consumeSlotOn = T.consumesloton
@@ -560,15 +602,51 @@ function Prepare(nameOnly)
     S.hasBos = false
     S.hasFvgMit = false
     S.hasEntryPath = false
+    trace("Prepare finish")
 end
 
 function Update(period, mode)
+    trace("Update start")
+
+    if S == nil or S.source == nil or S.first == nil then
+        trace("missing source/first")
+        return
+    end
+
     if period < S.first then
         return
     end
 
+    if H == nil or H.m5 == nil or H.m15 == nil or H.d1 == nil then
+        trace("missing histories")
+        return
+    end
+
+    if I == nil or I.ema20m5 == nil then
+        trace("missing indicator ema20m5")
+        return
+    end
+
+    if S.dayKey == nil then
+        trace("missing S.dayKey")
+    end
+    if S.bias == nil then
+        trace("missing S.bias")
+    end
+    if S.entry == nil then
+        trace("missing S.entry")
+    end
+    if S.tp == nil then
+        trace("missing S.tp")
+    end
+    if S.sl == nil then
+        trace("missing S.sl")
+    end
+
     updateDayReset(period)
+    trace("day reset")
     S.blockedReason = ""
+    trace("core calculation start")
 
     local focusOk = updateFocusWindow(period)
     if not focusOk then
@@ -576,14 +654,18 @@ function Update(period, mode)
         if S.blockedReason == "" then
             S.blockedReason = "Focus day filtered"
         end
+        trace("core calculation finish")
         writeManagerStreams(period)
+        trace("stream write finish")
         return
     end
 
     updateScore(period)
     updateTradeLimit()
     updateTargets(period)
+    trace("core calculation finish")
     writeManagerStreams(period)
+    trace("stream write finish")
 end
 
 function ReleaseInstance()
@@ -591,4 +673,8 @@ function ReleaseInstance()
     H.m15 = nil
     H.d1 = nil
     I.ema20m5 = nil
+end
+
+
+function AsyncOperationFinished(cookie, success, message, message1, message2)
 end

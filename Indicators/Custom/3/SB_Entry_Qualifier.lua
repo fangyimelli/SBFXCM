@@ -413,8 +413,25 @@ local function getParam(id, defaultValue)
 end
 
 function Prepare(nameOnly)
+    trace("Prepare start")
+
+    if instance == nil then
+        trace("instance missing")
+        return
+    end
+
     source = instance.source
+    if source == nil then
+        trace("source failed")
+        return
+    end
+    trace("source ok")
+
     first = source:first()
+    if first == nil then
+        trace("first failed")
+        return
+    end
 
     S.state = IDLE
     S.dayKey = nil
@@ -474,6 +491,7 @@ function Prepare(nameOnly)
     T.cdblue2 = getParam("cdblue2", 0)
     T.cdblue3 = getParam("cdblue3", 0)
     T.reqema20b3 = getParam("reqema20b3", false)
+    trace("parameters ok")
 
     T.fvgu = safeAddStream("fvgu", core.Line, "FVG Upper", core.rgb(0, 206, 209), first)
     T.fvgl = safeAddStream("fvgl", core.Line, "FVG Lower", core.rgb(0, 139, 139), first)
@@ -491,6 +509,12 @@ function Prepare(nameOnly)
     T.hud_blue_signal = safeAddStream("hud_blue_signal", HUD_STRING_STYLE, "BLUE SIGNAL", core.rgb(100, 149, 237), first)
     -- Optional stream: enable when runtime stability is confirmed.
     T.fvgmid = nil
+
+    if T.fvgu ~= nil and T.fvgl ~= nil and T.retu ~= nil and T.retl ~= nil and T.blue1 ~= nil and T.blue2 ~= nil and T.blue3 ~= nil and T.statedebug ~= nil and T.hud_entry_state ~= nil and T.hud_bos_ready ~= nil and T.hud_fvg ~= nil and T.hud_mitigation ~= nil and T.hud_retest ~= nil and T.hud_blue_signal ~= nil then
+        trace("streams ok")
+    else
+        trace("streams failed")
+    end
 
     local instrument = nil
     local isBid = true
@@ -515,6 +539,11 @@ function Prepare(nameOnly)
     H.d1, reason = safeGetHistory(instrument, "D1", isBid)
     if H.d1 == nil and reason ~= nil then
         trace("optional daily history unavailable: " .. reason)
+    end
+    if H.m5 ~= nil and H.m15 ~= nil then
+        trace("history ok")
+    else
+        trace("history failed")
     end
 
     local m5Close = nil
@@ -546,7 +575,15 @@ function Prepare(nameOnly)
         trace("ATR(14) on m15 unavailable, using rolling ATR fallback")
     end
 
+    if I.ema20m5 == nil then
+        trace("failed to create ema20m5")
+    end
+    if I.atr15 == nil then
+        trace("failed to create atr15")
+    end
+
     instance:name(profile:id() .. "(" .. source:name() .. ")")
+    trace("Prepare finish")
 end
 
 local function locateHistoryIndex(history, ts)
@@ -860,27 +897,64 @@ local function updateBlueSignals(period, retestHit)
 end
 
 function Update(period, mode)
+    trace("Update start")
+
+    if source == nil or first == nil then
+        trace("missing source/first")
+        return
+    end
+
     if period < first then
         return
     end
 
     if H.m5 == nil or H.m15 == nil then
+        trace("missing histories")
         block("mtf_dependency_missing")
         writeEntryStreams(period)
+        trace("stream write finish")
         return
     end
 
+    if H.d1 == nil then
+        trace("missing H.d1")
+    end
+
     if I.ema20m5 == nil then
+        trace("missing indicator ema20m5")
         block("ema20m5_unavailable")
         writeEntryStreams(period)
+        trace("stream write finish")
         return
     end
 
     if I.atr15 == nil then
+        trace("missing indicator atr15")
         block("atr15_unavailable")
         writeEntryStreams(period)
+        trace("stream write finish")
         return
     end
+
+    if S.dayKey == nil then
+        S.dayKey = dayKey(source:date(period))
+        trace("day reset")
+    else
+        local currDayKey = dayKey(source:date(period))
+        if currDayKey ~= S.dayKey then
+            S.dayKey = currDayKey
+            trace("day reset")
+        end
+    end
+
+    if S.bosLevel == nil then
+        trace("missing S.bosLevel")
+    end
+    if S.fvgUpper == nil then
+        trace("missing S.fvgUpper")
+    end
+
+    trace("core calculation start")
 
     if I.atr15Fallback == true then
         local idx = locateHistoryIndex(H.m15, source:date(period))
@@ -888,6 +962,7 @@ function Update(period, mode)
         if atr == nil then
             block("atr15_fallback_not_ready")
             writeEntryStreams(period)
+            trace("stream write finish")
             return
         end
     end
@@ -898,7 +973,9 @@ function Update(period, mode)
 
     local bosReady = updateMinimalBos(period)
     if not bosReady then
+        trace("core calculation finish")
         writeEntryStreams(period)
+        trace("stream write finish")
         return
     end
 
@@ -908,8 +985,13 @@ function Update(period, mode)
     S.retestHit = retestHit == true
     updateBlueSignals(period, retestHit)
 
+    trace("core calculation finish")
     writeEntryStreams(period)
+    trace("stream write finish")
 end
 
 function ReleaseInstance()
+end
+
+function AsyncOperationFinished(cookie, success, message, message1, message2)
 end

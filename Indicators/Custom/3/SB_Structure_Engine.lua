@@ -576,8 +576,26 @@ local function writeStructureStreams(period)
 end
 
 function Prepare(nameOnly)
+    trace("Prepare start")
+
+    if instance == nil then
+        trace("instance missing")
+        return
+    end
+
     S.source = instance.source
+    if S.source == nil then
+        trace("source failed")
+        return
+    end
+    trace("source ok")
+
     S.first = S.source:first()
+    if S.first == nil then
+        trace("first failed")
+        return
+    end
+
     instance:name(profile:id() .. "(" .. S.source:name() .. ")")
 
     if nameOnly then
@@ -601,6 +619,7 @@ function Prepare(nameOnly)
     S.debug = instance.parameters.debug
     S.dayatrlen = instance.parameters.dayatrlen
     S.dumppumpatrm = instance.parameters.dumppumpatrm
+    trace("parameters ok")
 
     T.asiah = safeAddStream("asiah", core.Line, "Asia High", core.rgb(255, 140, 0), S.first)
     T.asial = safeAddStream("asial", core.Line, "Asia Low", core.rgb(30, 144, 255), S.first)
@@ -612,26 +631,82 @@ function Prepare(nameOnly)
     T.hud_sweep = safeAddStream("hud_sweep", HUD_STRING_STYLE, "SWEEP", core.rgb(255, 215, 0), S.first)
     T.hud_bos = safeAddStream("hud_bos", HUD_STRING_STYLE, "BOS", core.rgb(255, 99, 71), S.first)
 
+    if T.asiah ~= nil and T.asial ~= nil and T.boslevel ~= nil and T.statedebug ~= nil and T.sweepdir ~= nil and T.hud_structure_state ~= nil and T.hud_asia ~= nil and T.hud_sweep ~= nil and T.hud_bos ~= nil then
+        trace("streams ok")
+    else
+        trace("streams failed")
+    end
+
     H.m5 = safeGetHistory(S.source:instrument(), "m5", S.source:isBid())
     H.m15 = safeGetHistory(S.source:instrument(), "m15", S.source:isBid())
     H.d1 = safeGetHistory(S.source:instrument(), "D1", S.source:isBid())
 
+    if H.m5 ~= nil and H.m15 ~= nil and H.d1 ~= nil then
+        trace("history ok")
+    else
+        trace("history failed")
+        if H.m5 == nil then
+            trace("failed to create m5 history")
+        end
+        if H.m15 == nil then
+            trace("failed to create m15 history")
+        end
+        if H.d1 == nil then
+            trace("failed to create d1 history")
+        end
+    end
+
     I.m15close = safeGetPriceStream(H.m15, "close")
+    if I.m15close == nil then
+        trace("failed to create m15close")
+    end
 
     resetForNewDay(S.source:date(S.first))
+    trace("Prepare finish")
 end
 
 function Update(period, mode)
+    trace("Update start")
+
+    if S == nil or S.source == nil or S.first == nil then
+        trace("missing source/first")
+        return
+    end
+
     if period < S.first then
         return
     end
 
+    if H == nil or H.m5 == nil or H.m15 == nil or H.d1 == nil then
+        trace("missing histories")
+        return
+    end
+
+    if I == nil or I.m15close == nil then
+        trace("missing indicator m15close")
+        return
+    end
+
+    if S.dayKey == nil then
+        trace("missing S.dayKey")
+    end
+    if S.bias == nil then
+        trace("missing S.bias")
+    end
+    if S.bosLevel == nil then
+        trace("missing S.bosLevel")
+    end
+
     updateDayReset(period)
+    trace("day reset")
+    trace("core calculation start")
     updateDayType(period)
     updateAsiaRange(period)
     updateSweep(period)
     updateBos(period)
+    trace("core calculation finish")
     writeStructureStreams(period)
+    trace("stream write finish")
 end
 
 function ReleaseInstance()
@@ -639,4 +714,8 @@ function ReleaseInstance()
     H.m15 = nil
     H.d1 = nil
     I.m15close = nil
+end
+
+
+function AsyncOperationFinished(cookie, success, message, message1, message2)
 end

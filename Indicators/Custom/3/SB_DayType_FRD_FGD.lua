@@ -19,6 +19,14 @@ local state = {
     lastDailyIndex = nil
 }
 
+local function trace(msg)
+    if state ~= nil and state.debug == true and core ~= nil and core.host ~= nil and core.host.trace ~= nil then
+        pcall(function()
+            core.host:trace("SB_DayType_FRD_FGD " .. tostring(msg))
+        end)
+    end
+end
+
 local HUD_STRING_STYLE = core.String ~= nil and core.String or core.Line
 
 function Init()
@@ -172,8 +180,25 @@ local function findDailyIndexByTime(t)
 end
 
 function Prepare(nameOnly)
+    if instance == nil then
+        return
+    end
+
+    state.debug = instance.parameters.debug
+    trace("Prepare start")
+
     state.source = instance.source
+    if state.source == nil then
+        trace("source failed")
+        return
+    end
+
+    trace("source ok")
     state.first = state.source:first()
+    if state.first == nil then
+        trace("first failed")
+        return
+    end
 
     local name = profile:id() .. "(" .. state.source:name() .. ")"
     instance:name(name)
@@ -186,6 +211,7 @@ function Prepare(nameOnly)
     state.dumppumpatrm = instance.parameters.dumppumpatrm
     state.showdaytypelabels = instance.parameters.showdaytypelabels
     state.debug = instance.parameters.debug
+    trace("parameters ok")
 
     state.biasStream = instance:addStream("Bias", core.Line, "Bias", "", core.rgb(255, 215, 0), state.first)
     state.tradeDayStream = instance:addStream("TradeDay", core.Line, "Trade Day", "", core.rgb(30, 144, 255), state.first)
@@ -198,7 +224,17 @@ function Prepare(nameOnly)
     state.hudBiasStream = instance:addStream("hud_bias", HUD_STRING_STYLE, "BIAS", "", core.rgb(255, 215, 0), state.first)
     state.hudBlockedStream = instance:addStream("hud_blocked", HUD_STRING_STYLE, "BLOCKED", "", core.rgb(255, 99, 71), state.first)
 
-    state.d1 = core.host:execute(
+    local streamsOk = state.biasStream ~= nil and state.tradeDayStream ~= nil and state.fgdLabelStream ~= nil and
+        state.frdLabelStream ~= nil and state.tradeLabelStream ~= nil and state.hudDayTypeStream ~= nil and
+        state.hudTradeDayStream ~= nil and state.hudBiasStream ~= nil and state.hudBlockedStream ~= nil
+    if streamsOk then
+        trace("streams ok")
+    else
+        trace("streams failed")
+    end
+
+    local okHistory, history = pcall(function()
+        return core.host:execute(
         "getSyncHistory",
         state.source:instrument(),
         "D1",
@@ -206,6 +242,20 @@ function Prepare(nameOnly)
         0,
         0
     )
+    end)
+    if okHistory then
+        state.d1 = history
+    else
+        state.d1 = nil
+    end
+
+    if state.d1 ~= nil then
+        trace("history ok")
+    else
+        trace("history failed")
+    end
+
+    trace("Prepare finish")
 end
 
 local function writeHudStream(stream, period, textValue, numericFallback)
@@ -223,7 +273,33 @@ local function writeHudStream(stream, period, textValue, numericFallback)
 end
 
 function Update(period, mode)
-    if period < state.first or state.d1 == nil then
+    trace("Update start")
+
+    if state == nil or state.source == nil or state.first == nil then
+        trace("missing source/first")
+        return
+    end
+
+    if period < state.first then
+        return
+    end
+
+    if state.d1 == nil then
+        trace("missing H.d1")
+        return
+    end
+
+    if state.dayKey == nil then
+        state.dayKey = dateKey(state.source:date(period))
+    elseif state.dayKey ~= dateKey(state.source:date(period)) then
+        state.dayKey = dateKey(state.source:date(period))
+        trace("day reset")
+    end
+
+    trace("core calculation start")
+    local okDailyFirst, dailyFirst = pcall(function() return state.d1:first() end)
+    if not okDailyFirst or dailyFirst == nil then
+        trace("missing H.d1 first")
         return
     end
 
@@ -234,11 +310,22 @@ function Update(period, mode)
 
     local result = evaluateDayType(state.d1, dailyIndex, state.dayatrlen, state.dumppumpatrm)
     if result == nil then
+        trace("core calculation finish")
         return
     end
 
-    state.biasStream[period] = result.bias
-    state.tradeDayStream[period] = result.tradeDayToday and 1 or 0
+    trace("core calculation finish")
+
+    if state.biasStream ~= nil then
+        state.biasStream[period] = result.bias
+    else
+        trace("missing bias stream")
+    end
+    if state.tradeDayStream ~= nil then
+        state.tradeDayStream[period] = result.tradeDayToday and 1 or 0
+    else
+        trace("missing trade day stream")
+    end
 
     local dayTypeText = "DAYTYPE: NONE"
     if result.dFgd then
@@ -264,18 +351,41 @@ function Update(period, mode)
     writeHudStream(state.hudBlockedStream, period, blockedText, result.tradeDayToday and 0 or 1)
 
     if state.showdaytypelabels then
-        state.fgdLabelStream[period] = result.dFgd and state.source.close[period] or 0
-        state.frdLabelStream[period] = result.dFrd and state.source.close[period] or 0
-        state.tradeLabelStream[period] = result.tradeDayToday and state.source.open[period] or 0
+        if state.fgdLabelStream ~= nil then
+            state.fgdLabelStream[period] = result.dFgd and state.source.close[period] or 0
+        else
+            trace("missing FGD label stream")
+        end
+        if state.frdLabelStream ~= nil then
+            state.frdLabelStream[period] = result.dFrd and state.source.close[period] or 0
+        else
+            trace("missing FRD label stream")
+        end
+        if state.tradeLabelStream ~= nil then
+            state.tradeLabelStream[period] = result.tradeDayToday and state.source.open[period] or 0
+        else
+            trace("missing trade label stream")
+        end
     else
-        state.fgdLabelStream[period] = 0
-        state.frdLabelStream[period] = 0
-        state.tradeLabelStream[period] = 0
+        if state.fgdLabelStream ~= nil then
+            state.fgdLabelStream[period] = 0
+        end
+        if state.frdLabelStream ~= nil then
+            state.frdLabelStream[period] = 0
+        end
+        if state.tradeLabelStream ~= nil then
+            state.tradeLabelStream[period] = 0
+        end
     end
+
+    trace("stream write finish")
 end
 
 function ReleaseInstance()
     state.d1 = nil
     state.d1IndexByDateKey = {}
     state.lastDailyIndex = nil
+end
+
+function AsyncOperationFinished(cookie, success, message, message1, message2)
 end
