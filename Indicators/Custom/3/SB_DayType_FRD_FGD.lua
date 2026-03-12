@@ -33,12 +33,27 @@ function Init()
 end
 
 local function safe_method(obj, name, ...)
-    if obj == nil then return nil end
+    if obj == nil then return false, nil end
     local fn = obj[name]
-    if type(fn) ~= "function" then return nil end
+    if type(fn) ~= "function" then return false, nil end
     local ok, result = pcall(fn, obj, ...)
-    if not ok then return nil end
-    return result
+    if not ok then return false, nil end
+    return true, result
+end
+
+local function safe_value(obj, name, ...)
+    local ok, result = safe_method(obj, name, ...)
+    if ok then return result end
+    return nil
+end
+
+local function debug_output(msg)
+    if instance == nil or instance.parameters == nil or not instance.parameters.debug or msg == nil then return end
+    if core == nil or core.host == nil then return end
+    local text = "[SB_DayType_FRD_FGD] " .. tostring(msg)
+    local ok = safe_method(core.host, "trace", text)
+    if ok then return end
+    safe_method(core.host, "execute", "alertMessage", text)
 end
 
 local function clamp_positive(v, fallback)
@@ -107,39 +122,46 @@ end
 local function draw_text(context, fontId, text, color, x, y)
     if context == nil or fontId == nil or text == nil or text == "" or x == nil or y == nil then return end
 
-    local measured = safe_method(context, "measureText", fontId, text, 0)
+    local measureOk, measured = safe_method(context, "measureText", fontId, text, 0)
     local w, h = nil, nil
-    if type(measured) == "table" then
+    if measureOk and type(measured) == "table" then
         w = measured.width or measured.w or measured[1]
         h = measured.height or measured.h or measured[2]
-    elseif measured ~= nil then
+    elseif measureOk and measured ~= nil then
         w = tonumber(measured)
     end
 
-    w = math.max(1, tonumber(w) or 1)
-    h = math.max(1, tonumber(h) or 1)
-    safe_method(context, "drawText", fontId, text, color, -1, x, y, x + w, y + h, 0)
+    w = math.max(1, tonumber(w) or (#tostring(text) * 8))
+    h = math.max(1, tonumber(h) or 14)
+    local ok = safe_method(context, "drawText", fontId, text, color, -1, x, y, x + w, y + h, 0)
+    if not ok then
+        local fallbackFont = (fontId ~= S.draw.dayTypeFont) and S.draw.dayTypeFont or S.draw.weekdayFont
+        safe_method(context, "drawText", fallbackFont, text, color, -1, x, y, x + w, y + h, 0)
+    end
 end
 
 local function get_x_for_time(context, ts)
     if context == nil or ts == nil then return nil end
-    local x = safe_method(context, "positionOfDate", ts)
+    local x = safe_value(context, "positionOfDate", ts)
     if x ~= nil then return x end
-    return safe_method(context, "positionOfTime", ts)
+    return safe_value(context, "positionOfTime", ts)
 end
 
 local function get_y_for_price(context, price)
     if context == nil or price == nil then return nil end
-    local y = safe_method(context, "positionOfPrice", price)
+    local y = safe_value(context, "positionOfPrice", price)
     if y ~= nil then return y end
-    local pt = safe_method(context, "pointOfPrice", price)
+    local pt = safe_value(context, "pointOfPrice", price)
     if type(pt) == "table" then return pt.y end
     return nil
 end
 
 local function draw_line(context, penId, x1, y1, x2, y2)
     if context == nil or penId == nil or x1 == nil or y1 == nil or x2 == nil or y2 == nil then return end
-    safe_method(context, "drawLine", penId, x1, y1, x2, y2)
+    local ok = safe_method(context, "drawLine", penId, x1, y1, x2, y2)
+    if not ok then
+        safe_method(context, "drawLine", S.draw.neutralPen, x1, y1, x2, y2)
+    end
 end
 
 local function ensure_draw_resources(context)
@@ -147,20 +169,31 @@ local function ensure_draw_resources(context)
     local weekdaySize = clamp_positive(instance.parameters.WeekdayFontSize, 10)
     local dayTypeSize = clamp_positive(instance.parameters.DayTypeFontSize, 10)
     local debugSize = math.max(8, clamp_positive(instance.parameters.DayTypeFontSize, 10) - 1)
-    local weekdayPx = safe_method(context, "pointsToPixels", weekdaySize) or weekdaySize
-    local dayTypePx = safe_method(context, "pointsToPixels", dayTypeSize) or dayTypeSize
-    local debugPx = safe_method(context, "pointsToPixels", debugSize) or debugSize
-    local penWidth = safe_method(context, "pointsToPixels", 1) or 1
-    local solidStyle = safe_method(context, "convertPenStyle", core.LINE_SOLID) or core.LINE_SOLID
+    local weekdayPx = safe_value(context, "pointsToPixels", weekdaySize) or weekdaySize
+    local dayTypePx = safe_value(context, "pointsToPixels", dayTypeSize) or dayTypeSize
+    local debugPx = safe_value(context, "pointsToPixels", debugSize) or debugSize
+    local penWidth = safe_value(context, "pointsToPixels", 1) or 1
+    local solidStyle = safe_value(context, "convertPenStyle", core.LINE_SOLID) or core.LINE_SOLID
 
-    safe_method(context, "createFont", FONT_WEEKDAY, "Arial", weekdayPx, weekdayPx, 0)
-    safe_method(context, "createFont", FONT_DAYTYPE, "Arial", dayTypePx, dayTypePx, core.FONT_BOLD or 0)
-    safe_method(context, "createFont", FONT_DEBUG, "Arial", debugPx, debugPx, 0)
+    local okWeekdayFont = safe_method(context, "createFont", FONT_WEEKDAY, "Arial", weekdayPx, weekdayPx, 0)
+    local okDayTypeFont = safe_method(context, "createFont", FONT_DAYTYPE, "Arial", dayTypePx, dayTypePx, core.FONT_BOLD or 0)
+    local okDebugFont = safe_method(context, "createFont", FONT_DEBUG, "Arial", debugPx, debugPx, 0)
 
-    safe_method(context, "createPen", PEN_NEUTRAL, solidStyle, penWidth, instance.parameters.InactiveTextColor)
-    safe_method(context, "createPen", PEN_RECT_HIGH, solidStyle, penWidth, instance.parameters.RectangleHighDebugColor)
-    safe_method(context, "createPen", PEN_RECT_LOW, solidStyle, penWidth, instance.parameters.RectangleLowDebugColor)
-    S.draw.initialized = true
+    local okNeutralPen = safe_method(context, "createPen", PEN_NEUTRAL, solidStyle, penWidth, instance.parameters.InactiveTextColor)
+    local okRectHighPen = safe_method(context, "createPen", PEN_RECT_HIGH, solidStyle, penWidth, instance.parameters.RectangleHighDebugColor)
+    local okRectLowPen = safe_method(context, "createPen", PEN_RECT_LOW, solidStyle, penWidth, instance.parameters.RectangleLowDebugColor)
+
+    local fontsReady = okWeekdayFont and okDayTypeFont and okDebugFont
+    local pensReady = okNeutralPen and okRectHighPen and okRectLowPen
+    S.draw.initialized = fontsReady and pensReady
+
+    if not S.draw.initialized then
+        debug_output(string.format(
+            "draw resource init failed (fonts: weekday=%s dayType=%s debug=%s; pens: neutral=%s rectHigh=%s rectLow=%s)",
+            tostring(okWeekdayFont), tostring(okDayTypeFont), tostring(okDebugFont),
+            tostring(okNeutralPen), tostring(okRectHighPen), tostring(okRectLowPen)
+        ))
+    end
 end
 
 local function getHistory(instrument, tf, isBid)
@@ -428,11 +461,11 @@ function Draw(stage, context)
 
     ensure_draw_resources(context)
 
-    local firstVisible = safe_method(context, "firstBar")
-    local lastVisible = safe_method(context, "lastBar")
+    local firstVisible = safe_value(context, "firstBar")
+    local lastVisible = safe_value(context, "lastBar")
     local from = math.max(S.first or 0, firstVisible or (S.first or 0))
     local to = lastVisible or (S.source:size() - 1)
-    local top = safe_method(context, "top") or 10
+    local top = safe_value(context, "top") or 10
     local baseYOffset = 8
     local linePadding = 2
     local weekdayLineHeight = clamp_positive(instance.parameters.WeekdayFontSize, 10) + linePadding
@@ -443,9 +476,9 @@ function Draw(stage, context)
             local d1_idx = find_history_index_by_time(S.d1, S.source:date(period))
             local d = build_day_record(d1_idx)
             if d ~= nil then
-                local x = safe_method(context, "positionOfBar", period)
+                local x = safe_value(context, "positionOfBar", period)
                 if x == nil then
-                    x = safe_method(context, "positionOfDate", S.source:date(period))
+                    x = safe_value(context, "positionOfDate", S.source:date(period))
                 end
 
                 if x ~= nil then
