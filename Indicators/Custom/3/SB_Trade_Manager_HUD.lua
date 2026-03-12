@@ -257,6 +257,108 @@ local function formatFocusDayText()
     return "FOCUS MODE: ON | FOCUS DAY: " .. tostring(T.focusDayKey or "-")
 end
 
+local function asUpperText(v)
+    if v == nil then
+        return nil
+    end
+    return string.upper(tostring(v))
+end
+
+local function mapDayTypeText()
+    local raw = asUpperText(S.dayType)
+    if raw == "FRD" or raw == "FGD" then
+        return raw
+    end
+    return "NONE"
+end
+
+local function mapTradeDayText(dayType)
+    local isTradeDay = S.isTradeDay
+    if type(isTradeDay) == "boolean" then
+        return isTradeDay and "YES" or "NO"
+    end
+
+    if dayType == "FRD" or dayType == "FGD" then
+        return "YES"
+    end
+    return "NO"
+end
+
+local function mapBiasText()
+    local bias = S.bias
+    if type(bias) == "number" then
+        if bias > 0 then
+            return "BULL"
+        elseif bias < 0 then
+            return "BEAR"
+        end
+    end
+
+    local raw = asUpperText(bias)
+    if raw == "BULL" or raw == "BULLISH" then
+        return "BULL"
+    end
+    if raw == "BEAR" or raw == "BEARISH" then
+        return "BEAR"
+    end
+    return "NONE"
+end
+
+local function mapStructureStateText()
+    if S.state == ASIAREADY then
+        return "ASIA READY"
+    end
+    if S.state == SWEPT then
+        return "SWEPT"
+    end
+    if S.state == BOS then
+        return "BOS"
+    end
+    return "IDLE"
+end
+
+local function mapEntryStateText()
+    if S.state == WAITFVG then
+        return "WAIT FVG"
+    end
+    if S.state == WAITMIT then
+        return "WAIT MITIGATION"
+    end
+    if S.state == WAITRET then
+        return "WAIT RETEST"
+    end
+    if S.state == BLUE1 then
+        return "BLUE1"
+    end
+    if S.state == BLUE2 then
+        return "BLUE2"
+    end
+    if S.state == BLUE3 then
+        return "BLUE3"
+    end
+    return "WAIT FVG"
+end
+
+local function mapFvgText()
+    local dir = S.fvgDir
+    if type(dir) == "number" then
+        if dir > 0 then
+            return "BULLISH"
+        elseif dir < 0 then
+            return "BEARISH"
+        end
+    end
+
+    local raw = asUpperText(S.fvg)
+    if raw == "BULLISH" or raw == "BULL" then
+        return "BULLISH"
+    end
+    if raw == "BEARISH" or raw == "BEAR" then
+        return "BEARISH"
+    end
+    return "NONE"
+end
+
 local function fScore(inNy, hasSweep, hasBos, hasFvgMit, hasEntryPath)
     local score = 0
     if inNy then
@@ -466,11 +568,48 @@ local function writeManagerStreams(period)
     end
 
     local displayText = "DISPLAY OK: " .. (S.displayOk and "YES" or "NO")
-    local tradeText = "TODAY TRADES: " .. tostring(S.todayTradeCount or 0) .. "/" .. tostring(T.dailymax or 0)
+    local tradeText = "TODAY TRADES: " .. tostring(S.todayTradeCount or 0) .. " / " .. tostring(T.dailymax or 0)
     local scoreText = "SCORE A: " .. tostring(S.scoreA or 0) .. " | SCORE A+: " .. tostring(S.scoreAPlus or 0)
     local targetsText = "ENTRY: " .. formatPrice(S.entry) .. " | TP: " .. formatPrice(S.tp) .. " | SL: " .. formatPrice(S.sl)
     local blockedText = normalizeBlockedReason(S.blockedReason)
     local focusText = formatFocusDayText()
+
+    local dayTypeText = mapDayTypeText()
+    local tradeDayText = mapTradeDayText(dayTypeText)
+    local biasText = mapBiasText()
+    local structureStateText = mapStructureStateText()
+    local entryStateText = mapEntryStateText()
+    local fvgText = mapFvgText()
+
+    if T.showhud then
+        writeHudStream(T.streams.hud_line_daytype, period, "DAYTYPE: " .. dayTypeText, 0)
+        writeHudStream(T.streams.hud_line_tradeday, period, "TRADE DAY: " .. tradeDayText, tradeDayText == "YES" and 1 or 0)
+        writeHudStream(T.streams.hud_line_bias, period, "BIAS: " .. biasText, 0)
+        writeHudStream(T.streams.hud_line_structure, period, "STRUCTURE STATE: " .. structureStateText, S.state or 0)
+        writeHudStream(T.streams.hud_line_entry_state, period, "ENTRY STATE: " .. entryStateText, S.state or 0)
+        writeHudStream(T.streams.hud_line_fvg, period, "FVG: " .. fvgText, 0)
+        writeHudStream(T.streams.hud_line_display, period, displayText, S.displayOk and 1 or 0)
+        writeHudStream(T.streams.hud_line_score, period, "SCORE A: " .. tostring(S.scoreA or 0), S.scoreA or 0)
+        writeHudStream(T.streams.hud_line_trades, period, tradeText, S.todayTradeCount or 0)
+        writeHudStream(T.streams.hud_line_entry, period, "ENTRY: " .. formatPrice(S.entry), S.entry or 0)
+        writeHudStream(T.streams.hud_line_tp, period, "TP: " .. formatPrice(S.tp), S.tp or 0)
+        writeHudStream(T.streams.hud_line_sl, period, "SL: " .. formatPrice(S.sl), S.sl or 0)
+        writeHudStream(T.streams.hud_line_blocked, period, blockedText ~= "" and ("BLOCKED: " .. blockedText) or "BLOCKED: NONE", blockedText ~= "" and 1 or 0)
+    else
+        writeHudStream(T.streams.hud_line_daytype, period, "", 0)
+        writeHudStream(T.streams.hud_line_tradeday, period, "", 0)
+        writeHudStream(T.streams.hud_line_bias, period, "", 0)
+        writeHudStream(T.streams.hud_line_structure, period, "", 0)
+        writeHudStream(T.streams.hud_line_entry_state, period, "", 0)
+        writeHudStream(T.streams.hud_line_fvg, period, "", 0)
+        writeHudStream(T.streams.hud_line_display, period, "", 0)
+        writeHudStream(T.streams.hud_line_score, period, "", 0)
+        writeHudStream(T.streams.hud_line_trades, period, "", 0)
+        writeHudStream(T.streams.hud_line_entry, period, "", 0)
+        writeHudStream(T.streams.hud_line_tp, period, "", 0)
+        writeHudStream(T.streams.hud_line_sl, period, "", 0)
+        writeHudStream(T.streams.hud_line_blocked, period, "", 0)
+    end
 
     writeHudStream(T.streams.hud_trade, period, displayText .. " | " .. tradeText, S.displayOk and 1 or 0)
     writeHudStream(T.streams.hud_score, period, scoreText, S.scoreA or 0)
@@ -557,8 +696,21 @@ function Prepare(nameOnly)
     T.streams.hud_targets = safeAddStream("hud_targets", HUD_STRING_STYLE, "HUD Targets", core.rgb(135, 206, 250), S.first)
     T.streams.hud_blocked = safeAddStream("hud_blocked", HUD_STRING_STYLE, "HUD Blocked", core.rgb(255, 99, 71), S.first)
     T.streams.hud_focus = safeAddStream("hud_focus", HUD_STRING_STYLE, "HUD Focus", core.rgb(255, 140, 0), S.first)
+    T.streams.hud_line_daytype = safeAddStream("hud_line_daytype", HUD_STRING_STYLE, "HUD DAYTYPE", core.rgb(255, 255, 255), S.first)
+    T.streams.hud_line_tradeday = safeAddStream("hud_line_tradeday", HUD_STRING_STYLE, "HUD TRADE DAY", core.rgb(255, 255, 255), S.first)
+    T.streams.hud_line_bias = safeAddStream("hud_line_bias", HUD_STRING_STYLE, "HUD BIAS", core.rgb(255, 255, 255), S.first)
+    T.streams.hud_line_structure = safeAddStream("hud_line_structure", HUD_STRING_STYLE, "HUD STRUCTURE", core.rgb(255, 255, 255), S.first)
+    T.streams.hud_line_entry_state = safeAddStream("hud_line_entry_state", HUD_STRING_STYLE, "HUD ENTRY STATE", core.rgb(255, 255, 255), S.first)
+    T.streams.hud_line_fvg = safeAddStream("hud_line_fvg", HUD_STRING_STYLE, "HUD FVG", core.rgb(255, 255, 255), S.first)
+    T.streams.hud_line_display = safeAddStream("hud_line_display", HUD_STRING_STYLE, "HUD DISPLAY", core.rgb(255, 255, 255), S.first)
+    T.streams.hud_line_score = safeAddStream("hud_line_score", HUD_STRING_STYLE, "HUD SCORE", core.rgb(255, 255, 255), S.first)
+    T.streams.hud_line_trades = safeAddStream("hud_line_trades", HUD_STRING_STYLE, "HUD TRADES", core.rgb(255, 255, 255), S.first)
+    T.streams.hud_line_entry = safeAddStream("hud_line_entry", HUD_STRING_STYLE, "HUD ENTRY", core.rgb(255, 255, 255), S.first)
+    T.streams.hud_line_tp = safeAddStream("hud_line_tp", HUD_STRING_STYLE, "HUD TP", core.rgb(255, 255, 255), S.first)
+    T.streams.hud_line_sl = safeAddStream("hud_line_sl", HUD_STRING_STYLE, "HUD SL", core.rgb(255, 255, 255), S.first)
+    T.streams.hud_line_blocked = safeAddStream("hud_line_blocked", HUD_STRING_STYLE, "HUD BLOCKED", core.rgb(255, 255, 255), S.first)
 
-    if T.streams.entrystream ~= nil and T.streams.tpstream ~= nil and T.streams.slstream ~= nil and T.streams.scorestream ~= nil and T.streams.tradectstream ~= nil and T.streams.displayokstream ~= nil and T.streams.focusstream ~= nil and T.streams.hudstate ~= nil and T.streams.blockedstream ~= nil and T.streams.hud_trade ~= nil and T.streams.hud_score ~= nil and T.streams.hud_targets ~= nil and T.streams.hud_blocked ~= nil and T.streams.hud_focus ~= nil then
+    if T.streams.entrystream ~= nil and T.streams.tpstream ~= nil and T.streams.slstream ~= nil and T.streams.scorestream ~= nil and T.streams.tradectstream ~= nil and T.streams.displayokstream ~= nil and T.streams.focusstream ~= nil and T.streams.hudstate ~= nil and T.streams.blockedstream ~= nil and T.streams.hud_trade ~= nil and T.streams.hud_score ~= nil and T.streams.hud_targets ~= nil and T.streams.hud_blocked ~= nil and T.streams.hud_focus ~= nil and T.streams.hud_line_daytype ~= nil and T.streams.hud_line_tradeday ~= nil and T.streams.hud_line_bias ~= nil and T.streams.hud_line_structure ~= nil and T.streams.hud_line_entry_state ~= nil and T.streams.hud_line_fvg ~= nil and T.streams.hud_line_display ~= nil and T.streams.hud_line_score ~= nil and T.streams.hud_line_trades ~= nil and T.streams.hud_line_entry ~= nil and T.streams.hud_line_tp ~= nil and T.streams.hud_line_sl ~= nil and T.streams.hud_line_blocked ~= nil then
         trace("streams ok")
     else
         trace("streams failed")
