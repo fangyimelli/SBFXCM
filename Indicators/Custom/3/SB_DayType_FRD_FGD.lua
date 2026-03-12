@@ -19,6 +19,13 @@ function Init()
     indicator.parameters:addDouble("max_rectangle_height_atr", "Max Rectangle Height ATR", "", 1.2)
     indicator.parameters:addDouble("atr_mult", "Pump/Dump ATR Mult", "", 1.0)
     indicator.parameters:addInteger("dayatrlen", "Day ATR Length", "", 14)
+    indicator.parameters:addBoolean("enablequality", "Enable Quality Filter", "", true)
+    indicator.parameters:addDouble("qualityatrmult", "Quality Prev Day ATR Mult", "", 1.2)
+    indicator.parameters:addDouble("qualityeventatrmult", "Quality Event Day ATR Mult", "", 0.6)
+    indicator.parameters:addDouble("qualitycloseextreme", "Quality Close Extreme Ratio", "", 0.7)
+    indicator.parameters:addDouble("qualityreclaimratio", "Quality Reclaim Ratio", "", 0.5)
+    indicator.parameters:addInteger("qualityscoremin", "Quality Min Score For +", "", 4)
+    indicator.parameters:addBoolean("showqualityaudit", "Show Quality Audit", "", false)
     indicator.parameters:addBoolean("ShowWeekdayLabels", "Show Weekday Labels", "", true)
     indicator.parameters:addBoolean("ShowDayTypeLabels", "Show DayType Labels", "", true)
     indicator.parameters:addInteger("WeekdayFontSize", "Weekday Font Size", "", 10)
@@ -26,6 +33,8 @@ function Init()
     indicator.parameters:addColor("WeekdayTextColor", "Weekday Text Color", "", core.rgb(180, 180, 180))
     indicator.parameters:addColor("FRDTextColor", "FRD Text Color", "", core.rgb(220, 20, 60))
     indicator.parameters:addColor("FGDTextColor", "FGD Text Color", "", core.rgb(0, 180, 0))
+    indicator.parameters:addColor("FRDPlusColor", "FRD+ Text Color", "", core.rgb(255, 64, 64))
+    indicator.parameters:addColor("FGDPlusColor", "FGD+ Text Color", "", core.rgb(0, 230, 140))
     indicator.parameters:addColor("TradeDayTextColor", "Trade Day Text Color", "", core.rgb(255, 200, 0))
     indicator.parameters:addColor("InactiveTextColor", "Inactive Text Color", "", core.rgb(120, 120, 120))
     indicator.parameters:addColor("RectangleHighDebugColor", "Rectangle High Debug Color", "", core.rgb(255, 255, 255))
@@ -97,46 +106,40 @@ function GetDayTypeLabels(period, dayRecord)
     if period == nil or dayRecord == nil then return {} end
 
     local labels = {}
-    if dayRecord.isFrd or dayRecord.is_frd_event_day then
-        labels[#labels + 1] = "FRD"
-    end
-    if dayRecord.isFgd or dayRecord.is_fgd_event_day then
-        labels[#labels + 1] = "FGD"
-    end
     if dayRecord.isTradeDay or dayRecord.is_frd_trade_day_candidate or dayRecord.is_fgd_trade_day_candidate then
         labels[#labels + 1] = "Trade Day"
+        return labels
     end
+
+    if dayRecord.isFgd or dayRecord.is_fgd_event_day then
+        labels[#labels + 1] = dayRecord.isHighQualityFgd and "FGD+" or "FGD"
+    elseif dayRecord.isFrd or dayRecord.is_frd_event_day then
+        labels[#labels + 1] = dayRecord.isHighQualityFrd and "FRD+" or "FRD"
+    end
+
     return labels
 end
 
 local function build_audit_lines(dayRecord)
     if dayRecord == nil or dayRecord.audit == nil then return {} end
+    if not instance.parameters.showqualityaudit then return {} end
+    if not (dayRecord.isFgd or dayRecord.is_fgd_event_day or dayRecord.isFrd or dayRecord.is_frd_event_day) then return {} end
+
     local audit = dayRecord.audit
     local yn = function(v) return v and "Y" or "N" end
-
-    if dayRecord.isFgd or dayRecord.is_fgd_event_day then
-        return {
-            string.format("PrevDump:%s TodayUp:%s", yn(audit.prevDump), yn(audit.todayUp)),
-            string.format("yRange:%.5f Thr:%.5f", tonumber(audit.yRange) or 0, tonumber(audit.threshold) or 0)
-        }
-    end
-
-    if dayRecord.isFrd or dayRecord.is_frd_event_day then
-        return {
-            string.format("PrevPump:%s TodayDown:%s", yn(audit.prevPump), yn(audit.todayDown)),
-            string.format("yRange:%.5f Thr:%.5f", tonumber(audit.yRange) or 0, tonumber(audit.threshold) or 0)
-        }
-    end
-
-    if dayRecord.isTradeDay or dayRecord.is_trade_day then
-        return {string.format("From Prev Event:%s", yn(audit.fromPrevEvent))}
-    end
-
-    return {}
+    return {
+        string.format("PrevATR:%s PrevCLV:%s", yn(audit.strongPrevDay), yn(audit.extremePrevClose)),
+        string.format("EventATR:%s EventCLV:%s", yn(audit.strongEventDay), yn(audit.extremeEventClose)),
+        string.format("Reclaim:%s Q=%d(%s)", yn(audit.reclaimEnough), tonumber(dayRecord.qualityScore) or 0, dayRecord.qualityGrade or "")
+    }
 end
 
 local function get_day_type_color(label)
-    if label == "FRD" then
+    if label == "FRD+" then
+        return instance.parameters.FRDPlusColor
+    elseif label == "FGD+" then
+        return instance.parameters.FGDPlusColor
+    elseif label == "FRD" then
         return instance.parameters.FRDTextColor
     elseif label == "FGD" then
         return instance.parameters.FGDTextColor
@@ -400,16 +403,27 @@ local function build_day_record(day_idx)
 
     local rect = eval_rectangle(S.d1, S.m15, day_idx)
 
-    local prev_base = evaluate_pump_dump(S.d1, day_idx - 1)
     local today_open, today_close = S.d1.open[day_idx], S.d1.close[day_idx]
+    local today_high, today_low = S.d1.high[day_idx], S.d1.low[day_idx]
 
     local atrLen = math.max(1, clamp_positive(instance.parameters.dayatrlen, 14))
     local atrMult = tonumber(instance.parameters.atr_mult) or 1.0
     if atrMult <= 0 then atrMult = 1.0 end
+
+    local enableQuality = instance.parameters.enablequality
+    local qualityAtrMult = tonumber(instance.parameters.qualityatrmult) or 1.2
+    local qualityEventAtrMult = tonumber(instance.parameters.qualityeventatrmult) or 0.6
+    local qualityCloseExtreme = tonumber(instance.parameters.qualitycloseextreme) or 0.7
+    local qualityReclaimRatio = tonumber(instance.parameters.qualityreclaimratio) or 0.5
+    local qualityScoreMin = math.max(1, clamp_positive(instance.parameters.qualityscoremin, 4))
+    local epsilon = 0.0000001
+
     local yesterday_idx = day_idx - 1
     local yOpen = S.d1.open[yesterday_idx]
     local yClose = S.d1.close[yesterday_idx]
-    local yRange = (S.d1.high[yesterday_idx] or 0) - (S.d1.low[yesterday_idx] or 0)
+    local yHigh = S.d1.high[yesterday_idx]
+    local yLow = S.d1.low[yesterday_idx]
+    local yRange = (yHigh or 0) - (yLow or 0)
     local yAtr = calc_atr(S.d1, yesterday_idx, atrLen)
     local threshold = (yAtr or 0) * atrMult
     local rangePass = yAtr ~= nil and yAtr > 0 and yRange >= threshold
@@ -438,6 +452,59 @@ local function build_day_record(day_idx)
     elseif is_fgd_event then
         event_day_type = 1
     end
+
+    local prevRange = yRange
+    local prevAtr = yAtr or 0
+    local prevCloseLocation = (yClose - yLow) / math.max((yHigh - yLow), epsilon)
+    local eventRange = (today_high or 0) - (today_low or 0)
+    local eventAtr = calc_atr(S.d1, day_idx, atrLen) or 0
+    local eventCloseLocation = (today_close - today_low) / math.max((today_high - today_low), epsilon)
+    local bodyHigh = math.max(yOpen, yClose)
+    local bodyLow = math.min(yOpen, yClose)
+    local bodySize = math.max(bodyHigh - bodyLow, epsilon)
+
+    local strongPrevDay = false
+    local extremePrevClose = false
+    local strongEventDay = false
+    local extremeEventClose = false
+    local reclaimEnough = false
+    local reclaimRatio = 0
+
+    if is_fgd_event or is_frd_event then
+        strongPrevDay = prevAtr > 0 and prevRange >= (prevAtr * qualityAtrMult)
+        strongEventDay = eventAtr > 0 and eventRange >= (eventAtr * qualityEventAtrMult)
+
+        if is_fgd_event then
+            extremePrevClose = prevCloseLocation <= (1 - qualityCloseExtreme)
+            extremeEventClose = eventCloseLocation >= qualityCloseExtreme
+            reclaimRatio = (today_close - bodyLow) / bodySize
+        else
+            extremePrevClose = prevCloseLocation >= qualityCloseExtreme
+            extremeEventClose = eventCloseLocation <= (1 - qualityCloseExtreme)
+            reclaimRatio = (bodyHigh - today_close) / bodySize
+        end
+
+        reclaimEnough = reclaimRatio >= qualityReclaimRatio
+    end
+
+    local qualityScore = 0
+    if strongPrevDay then qualityScore = qualityScore + 1 end
+    if extremePrevClose then qualityScore = qualityScore + 1 end
+    if strongEventDay then qualityScore = qualityScore + 1 end
+    if extremeEventClose then qualityScore = qualityScore + 1 end
+    if reclaimEnough then qualityScore = qualityScore + 1 end
+
+    local qualityGrade = ""
+    if qualityScore >= 5 then
+        qualityGrade = "A"
+    elseif qualityScore == 4 then
+        qualityGrade = "B"
+    elseif qualityScore == 3 then
+        qualityGrade = "C"
+    end
+
+    local isHighQualityFgd = enableQuality and is_fgd_event and qualityScore >= qualityScoreMin
+    local isHighQualityFrd = enableQuality and is_frd_event and qualityScore >= qualityScoreMin
 
     local repeated_pump_score = base.is_pump_day and 1 or 0
     local repeated_dump_score = base.is_dump_day and 1 or 0
@@ -470,6 +537,10 @@ local function build_day_record(day_idx)
         is_trade_day = is_trade_day,
         is_frd_trade_day_candidate = is_frd_trade_candidate,
         is_fgd_trade_day_candidate = is_fgd_trade_candidate,
+        isHighQualityFgd = isHighQualityFgd,
+        isHighQualityFrd = isHighQualityFrd,
+        qualityScore = qualityScore,
+        qualityGrade = qualityGrade,
         has_valid_rectangle = rect.valid,
         rectangle_high = rect.high,
         rectangle_low = rect.low,
@@ -489,9 +560,18 @@ local function build_day_record(day_idx)
             prevPump = prevDayWasPump,
             todayUp = todayUp,
             todayDown = todayDown,
-            atr = yAtr,
-            threshold = threshold,
-            yRange = yRange,
+            prevRange = prevRange,
+            prevAtr = prevAtr,
+            prevCloseLocation = prevCloseLocation,
+            eventRange = eventRange,
+            eventAtr = eventAtr,
+            eventCloseLocation = eventCloseLocation,
+            reclaimRatio = reclaimRatio,
+            strongPrevDay = strongPrevDay,
+            extremePrevClose = extremePrevClose,
+            strongEventDay = strongEventDay,
+            extremeEventClose = extremeEventClose,
+            reclaimEnough = reclaimEnough,
             fromPrevEvent = from_prev_event
         }
     }
@@ -502,15 +582,22 @@ local function build_day_record(day_idx)
             isFrd = rec.isFrd,
             isFgd = rec.isFgd,
             isTradeDay = rec.isTradeDay,
+            qualityScore = rec.qualityScore,
+            qualityGrade = rec.qualityGrade,
+            isHighQualityFgd = rec.isHighQualityFgd,
+            isHighQualityFrd = rec.isHighQualityFrd,
             audit = {
                 prevDump = rec.audit.prevDump,
                 prevPump = rec.audit.prevPump,
                 todayUp = rec.audit.todayUp,
                 todayDown = rec.audit.todayDown,
-                atr = rec.audit.atr,
-                threshold = rec.audit.threshold,
-                yRange = rec.audit.yRange,
-                fromPrevEvent = rec.audit.fromPrevEvent
+                prevRange = rec.audit.prevRange,
+                prevAtr = rec.audit.prevAtr,
+                prevCloseLocation = rec.audit.prevCloseLocation,
+                eventRange = rec.audit.eventRange,
+                eventAtr = rec.audit.eventAtr,
+                eventCloseLocation = rec.audit.eventCloseLocation,
+                reclaimRatio = rec.audit.reclaimRatio
             }
         }
     end
@@ -598,12 +685,10 @@ function Draw(stage, context)
                             draw_text(context, S.draw.dayTypeFont, label, get_day_type_color(label), x, y)
                         end
 
-                        if instance.parameters.debug then
-                            local auditLines = build_audit_lines(d)
-                            for i = 1, #auditLines do
-                                local y = y1 + weekdayLineHeight + (#labels * dayTypeLineHeight) + ((i - 1) * dayTypeLineHeight)
-                                draw_text(context, S.draw.debugFont or S.draw.dayTypeFont, auditLines[i], instance.parameters.InactiveTextColor, x, y)
-                            end
+                        local auditLines = build_audit_lines(d)
+                        for i = 1, #auditLines do
+                            local y = y1 + weekdayLineHeight + (#labels * dayTypeLineHeight) + ((i - 1) * dayTypeLineHeight)
+                            draw_text(context, S.draw.debugFont or S.draw.dayTypeFont, auditLines[i], instance.parameters.InactiveTextColor, x, y)
                         end
                     end
 
