@@ -38,7 +38,7 @@ local function clamp_positive(v, fallback)
     return math.floor(n)
 end
 
-local function weekday_label(ts)
+local function weekday_label_from_ts(ts)
     if ts == nil then return "" end
     local t = nil
     if core ~= nil and type(core.dateToTable) == "function" then
@@ -50,6 +50,49 @@ local function weekday_label(ts)
         return names[t.wday] or ""
     end
     return ""
+end
+
+function IsNewTradingDay(period)
+    if S.source == nil or period == nil then return false end
+    local ts = S.source:date(period)
+    if ts == nil then return false end
+    if period <= (S.first or 0) then return true end
+
+    local prev_ts = S.source:date(period - 1)
+    if prev_ts == nil then return true end
+    return math.floor(ts) ~= math.floor(prev_ts)
+end
+
+function GetWeekdayLabel(period)
+    if S.source == nil or period == nil then return "" end
+    return weekday_label_from_ts(S.source:date(period))
+end
+
+function GetDayTypeLabels(period, dayRecord)
+    if period == nil or dayRecord == nil then return {} end
+
+    local labels = {}
+    if dayRecord.is_frd_event_day then
+        labels[#labels + 1] = "FRD"
+    end
+    if dayRecord.is_fgd_event_day then
+        labels[#labels + 1] = "FGD"
+    end
+    if dayRecord.is_frd_trade_day_candidate or dayRecord.is_fgd_trade_day_candidate then
+        labels[#labels + 1] = "Trade Day"
+    end
+    return labels
+end
+
+local function get_day_type_color(label)
+    if label == "FRD" then
+        return instance.parameters.FRDTextColor
+    elseif label == "FGD" then
+        return instance.parameters.FGDTextColor
+    elseif label == "Trade Day" then
+        return instance.parameters.TradeDayTextColor
+    end
+    return instance.parameters.InactiveTextColor
 end
 
 local function draw_text(context, font, text, color, x, y)
@@ -329,42 +372,34 @@ function Draw(stage, context)
     local from = math.max(S.first or 0, firstVisible or (S.first or 0))
     local to = lastVisible or (S.source:size() - 1)
     local top = safe_method(context, "top") or 10
+    local baseYOffset = 8
+    local linePadding = 2
+    local weekdayLineHeight = clamp_positive(instance.parameters.WeekdayFontSize, 10) + linePadding
+    local dayTypeLineHeight = clamp_positive(instance.parameters.DayTypeFontSize, 10) + linePadding
 
     for period = from, to do
-        local d1_idx = find_history_index_by_time(S.d1, S.source:date(period))
-        local d = build_day_record(d1_idx)
-        if d ~= nil then
-            local x = safe_method(context, "positionOfBar", period)
-            if x == nil then
-                x = safe_method(context, "positionOfDate", S.source:date(period))
-            end
-
-            if x ~= nil then
-                local y1 = top + 14
-                local y2 = y1 + clamp_positive(instance.parameters.WeekdayFontSize, 10) + 2
-
-                if instance.parameters.ShowWeekdayLabels then
-                    draw_text(context, S.draw.weekdayFont, weekday_label(S.source:date(period)), instance.parameters.WeekdayTextColor, x, y1)
+        if IsNewTradingDay(period) then
+            local d1_idx = find_history_index_by_time(S.d1, S.source:date(period))
+            local d = build_day_record(d1_idx)
+            if d ~= nil then
+                local x = safe_method(context, "positionOfBar", period)
+                if x == nil then
+                    x = safe_method(context, "positionOfDate", S.source:date(period))
                 end
 
-                if instance.parameters.ShowDayTypeLabels then
-                    local dayTypeText = ""
-                    local dayTypeColor = instance.parameters.InactiveTextColor
-                    if d.is_frd_trade_day_candidate or d.is_fgd_trade_day_candidate then
-                        dayTypeText = "TRADE"
-                        dayTypeColor = instance.parameters.TradeDayTextColor
-                    elseif d.is_frd_event_day then
-                        dayTypeText = "FRD"
-                        dayTypeColor = instance.parameters.FRDTextColor
-                    elseif d.is_fgd_event_day then
-                        dayTypeText = "FGD"
-                        dayTypeColor = instance.parameters.FGDTextColor
-                    elseif d.is_pump_day then
-                        dayTypeText = "PUMP"
-                    elseif d.is_dump_day then
-                        dayTypeText = "DUMP"
+                if x ~= nil then
+                    local y1 = top + baseYOffset
+                    local weekdayColor = instance.parameters.ShowWeekdayLabels and instance.parameters.WeekdayTextColor or instance.parameters.InactiveTextColor
+                    draw_text(context, S.draw.weekdayFont, GetWeekdayLabel(period), weekdayColor, x, y1)
+
+                    if instance.parameters.ShowDayTypeLabels then
+                        local labels = GetDayTypeLabels(period, d)
+                        for i = 1, #labels do
+                            local label = labels[i]
+                            local y = y1 + weekdayLineHeight + ((i - 1) * dayTypeLineHeight)
+                            draw_text(context, S.draw.dayTypeFont, label, get_day_type_color(label), x, y)
+                        end
                     end
-                    draw_text(context, S.draw.dayTypeFont, dayTypeText, dayTypeColor, x, y2)
                 end
             end
         end
