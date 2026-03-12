@@ -163,6 +163,30 @@ local function draw_line(context, penId, x1, y1, x2, y2)
     end
 end
 
+local function measure_text(context, font, text)
+    if context == nil or font == nil or text == nil then return nil, nil end
+    local m = safe_method(context, "measureText", font, text)
+    if type(m) == "table" then
+        return m.width or m.cx or m.x, m.height or m.cy or m.y
+    end
+    return nil, nil
+end
+
+local function find_source_period_by_time(ts)
+    if S.source == nil or ts == nil then return nil end
+    local first = S.source:first()
+    local last = S.source:size() - 1
+    local found = nil
+    for i = first, last do
+        if S.source:date(i) <= ts then
+            found = i
+        else
+            break
+        end
+    end
+    return found
+end
+
 local function ensure_draw_resources(context)
     if S.draw.initialized then return end
     local weekdaySize = clamp_positive(instance.parameters.WeekdayFontSize, 10)
@@ -467,8 +491,10 @@ function Draw(stage, context)
     local top = safe_value(context, "top") or 10
     local baseYOffset = 8
     local linePadding = 2
-    local weekdayLineHeight = clamp_positive(instance.parameters.WeekdayFontSize, 10) + linePadding
-    local dayTypeLineHeight = clamp_positive(instance.parameters.DayTypeFontSize, 10) + linePadding
+    local _, weekdayMeasuredH = measure_text(context, S.draw.weekdayFont, "Wed")
+    local _, dayTypeMeasuredH = measure_text(context, S.draw.dayTypeFont, "Trade Day")
+    local weekdayLineHeight = (weekdayMeasuredH or clamp_positive(instance.parameters.WeekdayFontSize, 10)) + linePadding
+    local dayTypeLineHeight = (dayTypeMeasuredH or clamp_positive(instance.parameters.DayTypeFontSize, 10)) + linePadding
 
     for period = from, to do
         if IsNewTradingDay(period) then
@@ -494,9 +520,11 @@ function Draw(stage, context)
                         end
                     end
 
-                    if instance.parameters.debug and d.rectangle_high ~= nil and d.rectangle_low ~= nil then
-                        local startX = get_x_for_time(context, d.rectangle_start_time) or x
-                        local endX = get_x_for_time(context, d.rectangle_end_time) or x
+                    if d.rectangle_high ~= nil and d.rectangle_low ~= nil then
+                        local startPeriod = find_source_period_by_time(d.rectangle_start_time)
+                        local endPeriod = find_source_period_by_time(d.rectangle_end_time)
+                        local startX = startPeriod ~= nil and safe_method(context, "positionOfBar", startPeriod) or x
+                        local endX = endPeriod ~= nil and safe_method(context, "positionOfBar", endPeriod) or x
                         local hiY = get_y_for_price(context, d.rectangle_high)
                         local loY = get_y_for_price(context, d.rectangle_low)
 
@@ -504,10 +532,12 @@ function Draw(stage, context)
                             if startX > endX then startX, endX = endX, startX end
                             draw_line(context, S.draw.rectHighPen or S.draw.neutralPen, startX, hiY, endX, hiY)
                             draw_line(context, S.draw.rectLowPen or S.draw.neutralPen, startX, loY, endX, loY)
-                            draw_line(context, S.draw.neutralPen, startX, hiY, startX, loY)
-                            draw_line(context, S.draw.neutralPen, endX, hiY, endX, loY)
-                            draw_text(context, S.draw.debugFont, "rectangleHigh", instance.parameters.RectangleHighDebugColor, startX, hiY)
-                            draw_text(context, S.draw.debugFont, "rectangleLow", instance.parameters.RectangleLowDebugColor, startX, loY)
+                            if instance.parameters.debug then
+                                draw_line(context, S.draw.neutralPen, startX, hiY, startX, loY)
+                                draw_line(context, S.draw.neutralPen, endX, hiY, endX, loY)
+                                draw_text(context, S.draw.debugFont or S.draw.dayTypeFont, "rectangleHigh", instance.parameters.RectangleHighDebugColor, startX, hiY)
+                                draw_text(context, S.draw.debugFont or S.draw.dayTypeFont, "rectangleLow", instance.parameters.RectangleLowDebugColor, startX, loY)
+                            end
                         end
                     end
                 end

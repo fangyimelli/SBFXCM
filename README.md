@@ -1,62 +1,74 @@
-# SB FXCM 四層架構（目前真實狀態）
+# SB_DayType_FRD_FGD 現況說明（本輪）
 
-本專案目前把 4 隻 indicator 的資料流固定成單一路徑：
+> 本文件本輪只更新 `SB_DayType_FRD_FGD.lua` 的真實現況。
+> 以下定義屬於**目前程式化代理定義**，不是 playbook 唯一數學公式。
 
-`SB_DayType_FRD_FGD.lua -> SB_Structure_Engine.lua -> SB_Entry_Qualifier.lua -> SB_Trade_Manager_HUD.lua`
+## 1) 責任邊界（DayType only）
+`SB_DayType_FRD_FGD.lua` 目前只負責：
+- Pump Day / Dump Day（日級）
+- FRD / FGD event day（日級）
+- FRD / FGD trade-day candidate（僅候選標記）
+- consolidation rectangle（日級 + m15，**目前僅 debug display**）
+- DayType 圖上 label（`weekday`、`FRD`、`FGD`、`Trade Day`）
+- daytype_bias、event_day_type
 
-這份 README 只描述「現在程式真的在做的事」，不寫理想藍圖。
+本輪**未在 DayType 實作**：
+- BOS / BIS / Asia range / sweep / structure state machine
+- Entry rule（例如 5m EMA20 entry）
+- 正式 scoring 規則（目前分數欄位僅保留為開發中/參考值）
+- HUD 顯示管理
 
----
+## 2) 正式定義（目前程式版）
+### Pump Day
+同時滿足：
+- 當日 `high > 前一日 high`
+- 當日 `close` 在當日 range 上半部
+- 當日偏多（`close > open`）
+- 非 inside day
 
-## 1) 系統資料流總覽
+### Dump Day
+同時滿足：
+- 當日 `low < 前一日 low`
+- 當日 `close` 在當日 range 下半部
+- 當日偏空（`close < open`）
+- 非 inside day
 
-1. **DayType** 先產生 day/event 定義（唯一來源，SSOT）
-2. **Structure** 只吃 DayType 的結果，再加上自身的 Asia/Sweep/BOS 狀態
-3. **Entry** 只吃 DayType + Structure，做進場限定規則
-4. **HUD** 只做顯示，不代管上游判定
+### FRD event day
+同時滿足：
+- 前一日是 Pump Day
+- 當日 `close < open`
+- **本階段不使用 rectangle 當 gating 條件**（rectangle 僅 debug 顯示）
 
----
+### FGD event day
+同時滿足：
+- 前一日是 Dump Day
+- 當日 `close > open`
+- **本階段不使用 rectangle 當 gating 條件**（rectangle 僅 debug 顯示）
 
-## 2) 四隻 indicator 的責任分工
+### FRD trade-day candidate
+同時滿足：
+- 前一交易日 `is_frd_event_day = true`
+- 本日僅標記候選，等待下游 Entry consume
 
-### A. `Indicators/Custom/3/SB_DayType_FRD_FGD.lua`
-唯一責任：
-- Pump Day / Dump Day
-- FRD / FGD event day
-- Trade Day（由前一日 event 轉出）
-- day bias / day type code
-- rectangle（目前 debug + 輸出，不做 hard gate）
-- Day-level label / stream / debug
+### FGD trade-day candidate
+同時滿足：
+- 前一交易日 `is_fgd_event_day = true`
+- 本日僅標記候選，等待下游 Entry consume
 
-### B. `Indicators/Custom/3/SB_Structure_Engine.lua`
-唯一責任：
-- Asia range
-- sweep
-- BOS
-- BIS 與 structure state stream
+## 3) consolidation rectangle（程式化定義）
+- rectangle **不使用整天 high/low**；改為「close 前 consolidation」區間。
+- 先取當日 close 前最後 `rectangle_lookback_bars` 根 15m bar（預設 8）
+- 若當日 15m bars 不足 lookback，`has_valid_rectangle = false`
+- `rectangle_high` / `rectangle_low`：由上述 lookback 內最高/最低形成
+- 至少 `rectangle_min_contained_closes` 根 close 落在區間（預設 6）
+- 區間高度限制：`rectangle_height <= ATR(dayatrlen) * max_rectangle_height_atr`（預設 1.2）
+- 若最後 4 根出現明顯單邊擴張（位移 > rectangle_height * 0.8），判 invalid
+- rectangle 目前只做 debug：
+  - stream debug（`has_valid_rectangle`、`rectangle_high`、`rectangle_low`...）
+  - 圖上 debug 可視化（至少 `rectangleHigh` / `rectangleLow` 水平線；debug 模式可額外畫框與標註）
+- **不作為 FRD/FGD event 或 trade-day candidate gating 條件，也不作為文字顯示 gating 條件**
 
-並且只 consume DayType 結果（FRD/FGD/trade-day/bias/rectangle），不重建 day/event 定義。
-
-### C. `Indicators/Custom/3/SB_Entry_Qualifier.lua`
-唯一責任：
-- entry qualifier
-- FRD/FGD trade-day EMA20 close-back-inside 觸發
-- follow-through stream
-
-只 consume 上游 DayType + Structure，不另建 day/event。
-
-### D. `Indicators/Custom/3/SB_Trade_Manager_HUD.lua`
-唯一責任：
-- HUD 顯示
-- 彙整「上游提供了什麼、目前哪層已接線」
-
-不做 FRD/FGD 重判、不做 structure 重判、不代管 entry trigger。
-
----
-
-## 3) 哪些功能屬於 DayType
-
-目前 DayType 正式輸出（供下游消費）：
+## 4) 對外輸出欄位（可供下游 consume）
 - `is_pump_day`
 - `is_dump_day`
 - `is_frd_event_day`
@@ -73,6 +85,22 @@
 - `rectangle_bar_count`
 - `rectangle_start_time`
 - `rectangle_end_time`
+- `daytype_bias`
+- `event_day_type`
+
+## 4.1) DayType 可視化輸出（顯示層規格）
+- 顯示層已改為 owner-draw（`Prepare()` 內 `instance:ownerDrawn(true)`，`Draw(stage, context)` 在 `stage == 2` 繪製）
+- 第一行固定顯示：`weekday`
+- 第二行/第三行可顯示：`FRD` / `FGD` / `Trade Day`（同一交易日可同時出現多行）
+- 即使當日沒有 FRD / FGD / Trade Day setup，仍需顯示 `weekday`
+- stream 與圖上文字分離：stream 持續輸出供 debug / 下游 consume；圖上文字由 owner-draw 的 `drawText` 直接繪製
+- rectangle debug 可視化目前會畫 `rectangleHigh` / `rectangleLow` 水平線；僅作 debug，不作為 FRD/FGD/Trade Day 顯示 gating
+
+顯示層只 consume `SB_DayType_FRD_FGD.lua` 的正式欄位：
+- `is_frd_event_day`
+- `is_fgd_event_day`
+- `is_frd_trade_day_candidate`
+- `is_fgd_trade_day_candidate`
 
 Label 顯示：
 - `FRD`
