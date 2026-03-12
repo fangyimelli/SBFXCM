@@ -36,13 +36,13 @@
 同時滿足：
 - 前一日是 Pump Day
 - 當日 `close < open`
-- 當日 close 前形成有效 consolidation rectangle
+- **本階段不使用 rectangle 當 gating 條件**（rectangle 僅 debug 顯示）
 
 ### FGD event day
 同時滿足：
 - 前一日是 Dump Day
 - 當日 `close > open`
-- 當日 close 前形成有效 consolidation rectangle
+- **本階段不使用 rectangle 當 gating 條件**（rectangle 僅 debug 顯示）
 
 ### FRD trade-day candidate
 同時滿足：
@@ -57,13 +57,14 @@
 - 本日僅標記候選，等待下游 Entry consume
 
 ## 3) consolidation rectangle（程式化定義）
-- 使用 event day 最後 `rectangle_lookback_bars` 根 15m bar（預設 8）
+- rectangle **不使用整天 high/low**；改為「close 前 consolidation」區間。
+- 先取當日 close 前最後 `rectangle_lookback_bars` 根 15m bar（預設 8）
 - 若當日 15m bars 不足 lookback，`has_valid_rectangle = false`
-- 區間 high/low：由該 lookback 內最高/最低形成
+- `rectangle_high` / `rectangle_low`：由上述 lookback 內最高/最低形成
 - 至少 `rectangle_min_contained_closes` 根 close 落在區間（預設 6）
 - 區間高度限制：`rectangle_height <= ATR(dayatrlen) * max_rectangle_height_atr`（預設 1.2）
 - 若最後 4 根出現明顯單邊擴張（位移 > rectangle_height * 0.8），判 invalid
-- 本版本的「near close」定義為：固定使用當日最後 lookback 根 bar
+- 本階段 rectangle 僅用於 debug stream / 顯示，不阻擋 FRD/FGD event
 
 ## 4) 對外輸出欄位（可供下游 consume）
 - `is_pump_day`
@@ -104,7 +105,7 @@
 ## 5) 已實作 / 未實作
 ### 已實作
 - Pump Day / Dump Day 判定
-- FRD / FGD event day 判定（與 rectangle 綁定）
+- FRD / FGD event day 判定（僅 Pump/Dump + next day close color，不受 rectangle gating）
 - FRD / FGD trade-day candidate（前一日 event + rectangle）
 - rectangle valid / high / low / height / bar_count / start/end time
 - DayType debug streams（true/false 狀態可直接看）
