@@ -195,8 +195,13 @@ local function eval_rectangle(d1, m15, d1_idx)
 
     local target_day = day_key(d1:date(d1_idx))
     local bars = {}
+    local day_ts = d1:date(d1_idx)
+    local next_day_ts = d1_idx + 1 <= (d1:size() - 1) and d1:date(d1_idx + 1) or nil
     for i = m15:first(), m15:size() - 1 do
-        if day_key(m15:date(i)) == target_day then
+        local bar_ts = m15:date(i)
+        local in_target_day = day_key(bar_ts) == target_day
+        local before_next_day = next_day_ts == nil or bar_ts < next_day_ts
+        if in_target_day and before_next_day and bar_ts <= day_ts + 0.99999 then
             bars[#bars + 1] = i
         end
     end
@@ -263,8 +268,9 @@ local function build_day_record(day_idx)
     local prev_base = evaluate_pump_dump(S.d1, day_idx - 1)
     local today_open, today_close = S.d1.open[day_idx], S.d1.close[day_idx]
 
-    local is_frd_event = prev_base ~= nil and prev_base.is_pump_day and today_close < today_open and rect.valid
-    local is_fgd_event = prev_base ~= nil and prev_base.is_dump_day and today_close > today_open and rect.valid
+    -- Phase-1: rectangle is debug display only; it does not gate FRD/FGD events.
+    local is_frd_event = prev_base ~= nil and prev_base.is_pump_day and today_close < today_open
+    local is_fgd_event = prev_base ~= nil and prev_base.is_dump_day and today_close > today_open
 
     local prev_rec = nil
     if day_idx - 1 >= S.d1:first() then
