@@ -1,7 +1,7 @@
 local okShared, shared = pcall(dofile, "Indicators/Custom/3/SB_Playbook_Shared.lua")
 if not okShared then shared = nil end
 
-local S={source=nil,first=nil,m5=nil,d1=nil,ema=nil,last_day=nil,day_cache={},frd_triggered=false,fgd_triggered=false,frd_entry_idx=nil,fgd_entry_idx=nil}
+local S={source=nil,first=nil,m5=nil,m15=nil,d1=nil,ema=nil,last_day=nil,day_cache={},frd_triggered=false,fgd_triggered=false,frd_entry_idx=nil,fgd_entry_idx=nil}
 local T={}
 
 function Init()
@@ -21,23 +21,19 @@ end
 
 local function dayrecord(idx)
     if shared==nil or S.d1==nil or idx==nil then return nil end
-    if S.day_cache[idx]~=nil then return S.day_cache[idx] end
-    local base=shared.evaluate_daytype(S.d1, idx)
-    if base==nil then return nil end
-    local prev=shared.evaluate_daytype(S.d1, idx-1)
-    local open,close=S.d1.open[idx],S.d1.close[idx]
-    local frdEvent=prev~=nil and prev.is_pump_day and close<open
-    local fgdEvent=prev~=nil and prev.is_dump_day and close>open
-    local prevRec=S.day_cache[idx-1]
-    local rec={is_frd_trade_day_candidate=prevRec~=nil and prevRec.is_frd_event_day or false,is_fgd_trade_day_candidate=prevRec~=nil and prevRec.is_fgd_event_day or false,is_frd_event_day=frdEvent,is_fgd_event_day=fgdEvent}
-    S.day_cache[idx]=rec
-    return rec
+    return shared.build_daytype_record(S.d1, S.m15, idx, {
+        rectangle_lookback_bars=8,
+        rectangle_min_contained_closes=6,
+        max_rectangle_height_atr=1.2,
+        dayatrlen=14
+    }, S.day_cache)
 end
 
 function Prepare(nameOnly)
     S.source=instance.source; S.first=S.source:first(); instance:name(profile:id().."("..S.source:name()..")"); if nameOnly then return end
     S.m5=getHistory(S.source:instrument(),"m5",S.source:isBid())
     S.d1=getHistory(S.source:instrument(),"D1",S.source:isBid())
+    S.m15=getHistory(S.source:instrument(),"m15",S.source:isBid())
     local ok,ema=pcall(function() return core.indicators:create("EMA", S.source.close, 20) end)
     if ok then S.ema=ema end
 

@@ -19,12 +19,13 @@ local function pivotHigh(stream,p,l,r) if p<stream:first()+l or p+r>stream:size(
 local function pivotLow(stream,p,l,r) if p<stream:first()+l or p+r>stream:size()-1 then return nil end local v=stream.low[p] for i=p-l,p+r do if i~=p and stream.low[i]<=v then return nil end end return v end
 
 local function daytype(idx)
- if S.day_cache[idx]~=nil then return S.day_cache[idx] end
- local base = shared and shared.evaluate_daytype(S.d1, idx) or nil
- if base==nil then return nil end
- local rec = {is_frd_trade_day_candidate=false,is_fgd_trade_day_candidate=false,is_frd_event_day=false,is_fgd_event_day=false,bias=base.bias,rectangle_high=nil,rectangle_low=nil}
- S.day_cache[idx]=rec
- return rec
+ if shared==nil or S.d1==nil or S.m15==nil or idx==nil then return nil end
+ return shared.build_daytype_record(S.d1, S.m15, idx, {
+  rectangle_lookback_bars=8,
+  rectangle_min_contained_closes=6,
+  max_rectangle_height_atr=1.2,
+  dayatrlen=14
+ }, S.day_cache)
 end
 
 function Prepare(nameOnly)
@@ -40,6 +41,13 @@ function Prepare(nameOnly)
  T.has_session_sweep=instance:addStream("has_session_sweep",core.Line,"Session Sweep","",core.rgb(255,215,0),S.first)
  T.structure_state=instance:addStream("structure_state",core.Line,"Structure State","",core.rgb(240,240,240),S.first)
  T.structure_bias=instance:addStream("structure_bias",core.Line,"Structure Bias","",core.rgb(173,216,230),S.first)
+ T.frd_event=instance:addStream("structure_seen_frd_event_day",core.Line,"Seen FRD Event Day","",core.rgb(220,20,60),S.first)
+ T.fgd_event=instance:addStream("structure_seen_fgd_event_day",core.Line,"Seen FGD Event Day","",core.rgb(0,180,0),S.first)
+ T.frd_trade=instance:addStream("structure_seen_frd_trade_candidate",core.Line,"Seen FRD Trade Candidate","",core.rgb(255,140,0),S.first)
+ T.fgd_trade=instance:addStream("structure_seen_fgd_trade_candidate",core.Line,"Seen FGD Trade Candidate","",core.rgb(255,200,0),S.first)
+ T.rect_valid=instance:addStream("structure_seen_rectangle_valid",core.Line,"Seen Rectangle Valid","",core.rgb(135,206,250),S.first)
+ T.rect_high=instance:addStream("structure_seen_rectangle_high",core.Line,"Seen Rectangle High","",core.rgb(245,245,245),S.first)
+ T.rect_low=instance:addStream("structure_seen_rectangle_low",core.Line,"Seen Rectangle Low","",core.rgb(169,169,169),S.first)
  T.frontback=instance:addStream("frontside_backside_score",core.Line,"FrontsideBacksideScore","",core.rgb(135,206,235),S.first)
  T.trapped_longs=instance:addStream("trapped_longs_score",core.Line,"TrappedLongsScore","",core.rgb(250,128,114),S.first)
  T.trapped_shorts=instance:addStream("trapped_shorts_score",core.Line,"TrappedShortsScore","",core.rgb(144,238,144),S.first)
@@ -75,6 +83,7 @@ function Update(period, mode)
  local d=daytype(d1idx)
  local rectHigh = d and d.rectangle_high or nil
  local rectLow = d and d.rectangle_low or nil
+ local rectValid = d and d.has_valid_rectangle or false
  local bearBis = rectLow~=nil and S.source.close[period]<rectLow and hasBos
  local bullBis = rectHigh~=nil and S.source.close[period]>rectHigh and hasBos
 
@@ -93,6 +102,13 @@ function Update(period, mode)
  T.has_session_sweep[period]=(sweepUp or sweepDown) and 1 or 0
  T.structure_state[period]=fbScore
  T.structure_bias[period]=(bullBis and 1) or (bearBis and -1) or 0
+ T.frd_event[period]=(d and d.is_frd_event_day) and 1 or 0
+ T.fgd_event[period]=(d and d.is_fgd_event_day) and 1 or 0
+ T.frd_trade[period]=(d and d.is_frd_trade_day_candidate) and 1 or 0
+ T.fgd_trade[period]=(d and d.is_fgd_trade_day_candidate) and 1 or 0
+ T.rect_valid[period]=rectValid and 1 or 0
+ T.rect_high[period]=rectHigh
+ T.rect_low[period]=rectLow
  T.frontback[period]=fbScore
  T.trapped_longs[period]=trappedLongs
  T.trapped_shorts[period]=trappedShorts
