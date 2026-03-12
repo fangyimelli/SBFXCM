@@ -122,22 +122,21 @@ end
 local function draw_text(context, fontId, text, color, x, y)
     if context == nil or fontId == nil or text == nil or text == "" or x == nil or y == nil then return end
 
-    local measureOk, measured = safe_method(context, "measureText", fontId, text, 0)
-    local w, h = nil, nil
-    if measureOk and type(measured) == "table" then
-        w = measured.width or measured.w or measured[1]
-        h = measured.height or measured.h or measured[2]
-    elseif measureOk and measured ~= nil then
-        w = tonumber(measured)
+    local fontSize = clamp_positive(instance.parameters.DayTypeFontSize, 10)
+    local fallbackW = math.max(1, #tostring(text) * fontSize)
+    local fallbackH = math.max(1, fontSize)
+    local okMeasure, w, h = pcall(function()
+        return context:measureText(fontId, text, 0)
+    end)
+
+    if not okMeasure then
+        w = fallbackW
+        h = fallbackH
     end
 
-    w = math.max(1, tonumber(w) or (#tostring(text) * 8))
-    h = math.max(1, tonumber(h) or 14)
-    local ok = safe_method(context, "drawText", fontId, text, color, -1, x, y, x + w, y + h, 0)
-    if not ok then
-        local fallbackFont = (fontId ~= S.draw.dayTypeFont) and S.draw.dayTypeFont or S.draw.weekdayFont
-        safe_method(context, "drawText", fallbackFont, text, color, -1, x, y, x + w, y + h, 0)
-    end
+    w = math.max(1, tonumber(w) or fallbackW)
+    h = math.max(1, tonumber(h) or fallbackH)
+    safe_method(context, "drawText", fontId, text, color, -1, x, y, x + w, y + h, 0)
 end
 
 local function get_x_for_time(context, ts)
@@ -507,8 +506,8 @@ function Draw(stage, context)
                             draw_line(context, S.draw.rectLowPen or S.draw.neutralPen, startX, loY, endX, loY)
                             draw_line(context, S.draw.neutralPen, startX, hiY, startX, loY)
                             draw_line(context, S.draw.neutralPen, endX, hiY, endX, loY)
-                            draw_text(context, S.draw.debugFont or S.draw.dayTypeFont, "rectangleHigh", instance.parameters.RectangleHighDebugColor, startX, hiY)
-                            draw_text(context, S.draw.debugFont or S.draw.dayTypeFont, "rectangleLow", instance.parameters.RectangleLowDebugColor, startX, loY)
+                            draw_text(context, S.draw.debugFont, "rectangleHigh", instance.parameters.RectangleHighDebugColor, startX, hiY)
+                            draw_text(context, S.draw.debugFont, "rectangleLow", instance.parameters.RectangleLowDebugColor, startX, loY)
                         end
                     end
                 end
