@@ -8,19 +8,10 @@ local state = {
     debug = false,
     biasStream = nil,
     tradeDayStream = nil,
-    fgdLabelStream = nil,
-    frdLabelStream = nil,
-    tradeLabelStream = nil,
-    hudDayTypeStream = nil,
-    hudTradeDayStream = nil,
-    hudBiasStream = nil,
-    hudSummaryStream = nil,
-    hudBlockedStream = nil,
     d1IndexByDateKey = {},
-    lastDailyIndex = nil,
-    hudDrawer = nil,
-    hudCanDraw = nil,
-    hudPrefix = "SB_DAYTYPE_HUD_"
+    dayMarks = {},
+    dayOrder = {},
+    drawFont = nil
 }
 
 local function trace(msg)
@@ -29,68 +20,6 @@ local function trace(msg)
             core.host:trace("SB_DayType_FRD_FGD " .. tostring(msg))
         end)
     end
-end
-
-local HUD_STRING_STYLE = core.String ~= nil and core.String or core.Line
-
-local function deleteHudLabel(id)
-    if core == nil or core.host == nil or id == nil then
-        return
-    end
-
-    pcall(function() core.host:execute("removeLabel", id) end)
-    pcall(function() core.host:execute("deleteLabel", id) end)
-    pcall(function() core.host:execute("clearLabel", id) end)
-end
-
-local function drawHudLabel(id, text, row, color)
-    if core == nil or core.host == nil then
-        return false
-    end
-
-    local ok = false
-
-    if not ok then
-        ok = pcall(function()
-            core.host:execute("drawLabel1", id, "TL", 8, 8 + row * 18, text, color)
-        end)
-    end
-
-    if not ok then
-        ok = pcall(function()
-            core.host:execute("drawLabel", id, "TL", 8, 8 + row * 18, text, color)
-        end)
-    end
-
-    if not ok then
-        ok = pcall(function()
-            core.host:execute("drawLabel1", id, text, "TL", row)
-        end)
-    end
-
-    if not ok then
-        ok = pcall(function()
-            core.host:execute("drawLabel", id, text, "TL", row)
-        end)
-    end
-
-    return ok
-end
-
-local function updateHudLabels(dayTypeText, tradeDayText, biasText)
-    local dayTypeId = state.hudPrefix .. "DAYTYPE"
-    local tradeDayId = state.hudPrefix .. "TRADEDAY"
-    local biasId = state.hudPrefix .. "BIAS"
-
-    deleteHudLabel(dayTypeId)
-    deleteHudLabel(tradeDayId)
-    deleteHudLabel(biasId)
-
-    local ok1 = drawHudLabel(dayTypeId, dayTypeText, 0, core.rgb(240, 240, 240))
-    local ok2 = drawHudLabel(tradeDayId, tradeDayText, 1, core.rgb(135, 206, 250))
-    local ok3 = drawHudLabel(biasId, biasText, 2, core.rgb(255, 215, 0))
-
-    state.hudCanDraw = ok1 and ok2 and ok3
 end
 
 function Init()
@@ -243,24 +172,38 @@ local function findDailyIndexByTime(t)
     return nil
 end
 
+local function ensureDayMark(period)
+    local key = dateKey(state.source:date(period))
+    local mark = state.dayMarks[key]
+    if mark == nil then
+        mark = {
+            firstPeriod = period,
+            isFgd = false,
+            isFrd = false,
+            isTradeDay = false
+        }
+        state.dayMarks[key] = mark
+        state.dayOrder[#state.dayOrder + 1] = key
+    elseif period < mark.firstPeriod then
+        mark.firstPeriod = period
+    end
+
+    return mark
+end
+
 function Prepare(nameOnly)
     if instance == nil then
         return
     end
 
     state.debug = instance.parameters.debug
-    trace("Prepare start")
-
     state.source = instance.source
     if state.source == nil then
-        trace("source failed")
         return
     end
 
-    trace("source ok")
     state.first = state.source:first()
     if state.first == nil then
-        trace("first failed")
         return
     end
 
@@ -275,97 +218,43 @@ function Prepare(nameOnly)
     state.dumppumpatrm = instance.parameters.dumppumpatrm
     state.showdaytypelabels = instance.parameters.showdaytypelabels
     state.debug = instance.parameters.debug
-    trace("parameters ok")
+
+    instance:ownerDrawn(true)
 
     state.biasStream = instance:addStream("Bias", core.Line, "Bias", "", core.rgb(255, 215, 0), state.first)
     state.tradeDayStream = instance:addStream("TradeDay", core.Line, "Trade Day", "", core.rgb(30, 144, 255), state.first)
-    state.fgdLabelStream = instance:addStream("FGD", core.Line, "FGD", "", core.rgb(0, 200, 0), state.first)
-    state.frdLabelStream = instance:addStream("FRD", core.Line, "FRD", "", core.rgb(220, 20, 60), state.first)
-    state.tradeLabelStream = instance:addStream("TRADE_DAY", core.Line, "TRADE DAY", "", core.rgb(255, 140, 0), state.first)
-
-    state.hudDayTypeStream = instance:addStream("hud_daytype", HUD_STRING_STYLE, "DAYTYPE", "", core.rgb(240, 240, 240), state.first)
-    state.hudTradeDayStream = instance:addStream("hud_tradeday", HUD_STRING_STYLE, "TRADE DAY", "", core.rgb(135, 206, 250), state.first)
-    state.hudBiasStream = instance:addStream("hud_bias", HUD_STRING_STYLE, "BIAS", "", core.rgb(255, 215, 0), state.first)
-    state.hudSummaryStream = instance:addStream("hud_summary", HUD_STRING_STYLE, "STATUS", "", core.rgb(255, 255, 255), state.first)
-    state.hudBlockedStream = instance:addStream("hud_blocked", HUD_STRING_STYLE, "BLOCKED", "", core.rgb(255, 99, 71), state.first)
-
-    local streamsOk = state.biasStream ~= nil and state.tradeDayStream ~= nil and state.fgdLabelStream ~= nil and
-        state.frdLabelStream ~= nil and state.tradeLabelStream ~= nil and state.hudDayTypeStream ~= nil and
-        state.hudTradeDayStream ~= nil and state.hudBiasStream ~= nil and state.hudSummaryStream ~= nil and
-        state.hudBlockedStream ~= nil
-    if streamsOk then
-        trace("streams ok")
-    else
-        trace("streams failed")
-    end
 
     local okHistory, history = pcall(function()
         return core.host:execute(
-        "getSyncHistory",
-        state.source:instrument(),
-        "D1",
-        state.source:isBid(),
-        0,
-        0
-    )
+            "getSyncHistory",
+            state.source:instrument(),
+            "D1",
+            state.source:isBid(),
+            0,
+            0
+        )
     end)
+
     if okHistory then
         state.d1 = history
     else
         state.d1 = nil
     end
 
-    if state.d1 ~= nil then
-        trace("history ok")
-    else
-        trace("history failed")
-    end
+    state.dayMarks = {}
+    state.dayOrder = {}
+    state.d1IndexByDateKey = {}
+    state.drawFont = nil
 
     trace("Prepare finish")
 end
 
-local function writeHudStream(stream, period, textValue, numericFallback)
-    if stream == nil then
-        return
-    end
-
-    local ok = pcall(function()
-        stream[period] = textValue
-    end)
-
-    if not ok then
-        stream[period] = numericFallback
-    end
-end
-
 function Update(period, mode)
-    trace("Update start")
-
-    if state == nil or state.source == nil or state.first == nil then
-        trace("missing source/first")
+    if state == nil or state.source == nil or state.first == nil or state.d1 == nil then
         return
     end
 
     if period < state.first then
-        return
-    end
-
-    if state.d1 == nil then
-        trace("missing H.d1")
-        return
-    end
-
-    if state.dayKey == nil then
-        state.dayKey = dateKey(state.source:date(period))
-    elseif state.dayKey ~= dateKey(state.source:date(period)) then
-        state.dayKey = dateKey(state.source:date(period))
-        trace("day reset")
-    end
-
-    trace("core calculation start")
-    local okDailyFirst, dailyFirst = pcall(function() return state.d1:first() end)
-    if not okDailyFirst or dailyFirst == nil then
-        trace("missing H.d1 first")
         return
     end
 
@@ -376,90 +265,83 @@ function Update(period, mode)
 
     local result = evaluateDayType(state.d1, dailyIndex, state.dayatrlen, state.dumppumpatrm)
     if result == nil then
-        trace("core calculation finish")
         return
     end
 
-    trace("core calculation finish")
-
     if state.biasStream ~= nil then
         state.biasStream[period] = result.bias
-    else
-        trace("missing bias stream")
     end
+
     if state.tradeDayStream ~= nil then
         state.tradeDayStream[period] = result.tradeDayToday and 1 or 0
-    else
-        trace("missing trade day stream")
     end
 
-    local dayTypeText = "DAYTYPE: NONE"
-    if result.yFgd then
-        dayTypeText = "DAYTYPE: FGD"
-    elseif result.yFrd then
-        dayTypeText = "DAYTYPE: FRD"
+    local mark = ensureDayMark(period)
+    mark.isFgd = mark.isFgd or result.dFgd
+    mark.isFrd = mark.isFrd or result.dFrd
+    mark.isTradeDay = mark.isTradeDay or result.tradeDayToday
+end
+
+local function drawDayLabel(context, font, x, y, text, color)
+    local width, height = context:measureText(font, text, 0)
+    local tx = x - math.floor(width / 2)
+    context:drawText(font, text, color, -1, tx, y, width, height, 0)
+end
+
+function Draw(stage, context)
+    if stage ~= 2 then
+        return
     end
 
-    local tradeDayText = result.tradeDayToday and "TRADE DAY: YES" or "TRADE DAY: NO"
-
-    local biasText = "BIAS: NONE"
-    if result.bias > 0 then
-        biasText = "BIAS: BULL"
-    elseif result.bias < 0 then
-        biasText = "BIAS: BEAR"
+    if state.showdaytypelabels ~= true then
+        return
     end
 
-    local blockedText = result.tradeDayToday and "" or "BLOCKED: NOT TRADE DAY"
-    local statusText = dayTypeText .. " | " .. tradeDayText .. " | " .. biasText
-
-    updateHudLabels(dayTypeText, tradeDayText, biasText)
-
-    writeHudStream(state.hudDayTypeStream, period, dayTypeText, result.dFgd and 1 or (result.dFrd and -1 or 0))
-    writeHudStream(state.hudTradeDayStream, period, tradeDayText, result.tradeDayToday and 1 or 0)
-    writeHudStream(state.hudBiasStream, period, biasText, result.bias)
-    writeHudStream(state.hudSummaryStream, period, statusText, result.bias)
-    writeHudStream(state.hudBlockedStream, period, blockedText, result.tradeDayToday and 0 or 1)
-
-    if state.showdaytypelabels then
-        if state.fgdLabelStream ~= nil then
-            state.fgdLabelStream[period] = result.dFgd and state.source.close[period] or 0
-        else
-            trace("missing FGD label stream")
-        end
-        if state.frdLabelStream ~= nil then
-            state.frdLabelStream[period] = result.dFrd and state.source.close[period] or 0
-        else
-            trace("missing FRD label stream")
-        end
-        if state.tradeLabelStream ~= nil then
-            state.tradeLabelStream[period] = result.tradeDayToday and state.source.open[period] or 0
-        else
-            trace("missing trade label stream")
-        end
-    else
-        if state.fgdLabelStream ~= nil then
-            state.fgdLabelStream[period] = 0
-        end
-        if state.frdLabelStream ~= nil then
-            state.frdLabelStream[period] = 0
-        end
-        if state.tradeLabelStream ~= nil then
-            state.tradeLabelStream[period] = 0
-        end
+    if state.source == nil then
+        return
     end
 
-    trace("stream write finish")
+    if state.drawFont == nil then
+        state.drawFont = context:createFont("Arial", 9, false, false)
+    end
+
+    local topY = context:top() + 4
+    local lineHeight = 14
+
+    local i = 1
+    while i <= #state.dayOrder do
+        local key = state.dayOrder[i]
+        local mark = state.dayMarks[key]
+
+        if mark ~= nil and mark.firstPeriod ~= nil then
+            local x = state.source:position(mark.firstPeriod)
+            if x ~= nil then
+                local row = 0
+
+                if mark.isFgd then
+                    drawDayLabel(context, state.drawFont, x, topY + row * lineHeight, "FGD", core.rgb(0, 200, 0))
+                    row = row + 1
+                end
+
+                if mark.isFrd then
+                    drawDayLabel(context, state.drawFont, x, topY + row * lineHeight, "FRD", core.rgb(220, 20, 60))
+                    row = row + 1
+                end
+
+                if mark.isTradeDay then
+                    drawDayLabel(context, state.drawFont, x, topY + row * lineHeight, "Trade Day", core.rgb(255, 140, 0))
+                end
+            end
+        end
+
+        i = i + 1
+    end
 end
 
 function ReleaseInstance()
-    deleteHudLabel(state.hudPrefix .. "DAYTYPE")
-    deleteHudLabel(state.hudPrefix .. "TRADEDAY")
-    deleteHudLabel(state.hudPrefix .. "BIAS")
-
     state.d1 = nil
     state.d1IndexByDateKey = {}
-    state.lastDailyIndex = nil
-end
-
-function AsyncOperationFinished(cookie, success, message, message1, message2)
+    state.dayMarks = {}
+    state.dayOrder = {}
+    state.drawFont = nil
 end
