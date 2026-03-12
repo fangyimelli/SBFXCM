@@ -1,4 +1,4 @@
-local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}}
+local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, draw={initialized=false, weekdayFont=nil, dayTypeFont=nil, neutralPen=nil}}
 local T = {}
 
 function Init()
@@ -11,7 +11,61 @@ function Init()
     indicator.parameters:addInteger("rectangle_min_contained_closes", "Rectangle Min Contained Closes", "", 6)
     indicator.parameters:addDouble("max_rectangle_height_atr", "Max Rectangle Height ATR", "", 1.2)
     indicator.parameters:addInteger("dayatrlen", "Day ATR Length", "", 14)
+    indicator.parameters:addBoolean("ShowWeekdayLabels", "Show Weekday Labels", "", true)
+    indicator.parameters:addBoolean("ShowDayTypeLabels", "Show DayType Labels", "", true)
+    indicator.parameters:addInteger("WeekdayFontSize", "Weekday Font Size", "", 10)
+    indicator.parameters:addInteger("DayTypeFontSize", "DayType Font Size", "", 10)
+    indicator.parameters:addColor("WeekdayTextColor", "Weekday Text Color", "", core.rgb(180, 180, 180))
+    indicator.parameters:addColor("FRDTextColor", "FRD Text Color", "", core.rgb(220, 20, 60))
+    indicator.parameters:addColor("FGDTextColor", "FGD Text Color", "", core.rgb(0, 180, 0))
+    indicator.parameters:addColor("TradeDayTextColor", "Trade Day Text Color", "", core.rgb(255, 200, 0))
+    indicator.parameters:addColor("InactiveTextColor", "Inactive Text Color", "", core.rgb(120, 120, 120))
     indicator.parameters:addBoolean("debug", "Debug", "", false)
+end
+
+local function safe_method(obj, name, ...)
+    if obj == nil then return nil end
+    local fn = obj[name]
+    if type(fn) ~= "function" then return nil end
+    local ok, result = pcall(fn, obj, ...)
+    if not ok then return nil end
+    return result
+end
+
+local function clamp_positive(v, fallback)
+    local n = tonumber(v)
+    if n == nil or n <= 0 then return fallback end
+    return math.floor(n)
+end
+
+local function weekday_label(ts)
+    if ts == nil then return "" end
+    local t = nil
+    if core ~= nil and type(core.dateToTable) == "function" then
+        local ok, result = pcall(core.dateToTable, ts)
+        if ok then t = result end
+    end
+    if type(t) == "table" and t.wday ~= nil then
+        local names = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+        return names[t.wday] or ""
+    end
+    return ""
+end
+
+local function draw_text(context, font, text, color, x, y)
+    if context == nil or font == nil or text == nil or text == "" then return end
+    if safe_method(context, "drawText", font, text, color, -1, x, y, 0) ~= nil then return end
+    safe_method(context, "drawText", font, text, color, x, y)
+end
+
+local function ensure_draw_resources(context)
+    if S.draw.initialized then return end
+    local weekdaySize = clamp_positive(instance.parameters.WeekdayFontSize, 10)
+    local dayTypeSize = clamp_positive(instance.parameters.DayTypeFontSize, 10)
+    S.draw.weekdayFont = safe_method(context, "createFont", "Arial", weekdaySize, false, false)
+    S.draw.dayTypeFont = safe_method(context, "createFont", "Arial", dayTypeSize, true, false)
+    S.draw.neutralPen = safe_method(context, "createPen", 1, instance.parameters.InactiveTextColor)
+    S.draw.initialized = true
 end
 
 local function getHistory(instrument, tf, isBid)
@@ -236,6 +290,7 @@ function Prepare(nameOnly)
     S.first = S.source:first()
     instance:name(profile:id() .. "(" .. S.source:name() .. ")")
     if nameOnly then return end
+    instance:ownerDrawn(true)
 
     S.d1 = getHistory(S.source:instrument(), "D1", S.source:isBid())
     S.m15 = getHistory(S.source:instrument(), "m15", S.source:isBid())
@@ -262,6 +317,58 @@ function Prepare(nameOnly)
     T.repeatedDumpScore = instance:addStream("repeated_dump_score", core.Line, "Repeated Dump Score", "", core.rgb(205,92,92), S.first)
     T.consolidationScore = instance:addStream("consolidation_score", core.Line, "Consolidation Score", "", core.rgb(100,149,237), S.first)
     T.threeLevelsScore = instance:addStream("three_levels_score", core.Line, "Three Levels Score", "", core.rgb(255,160,122), S.first)
+end
+
+function Draw(stage, context)
+    if stage ~= 2 or context == nil or S.source == nil or S.d1 == nil then return end
+
+    ensure_draw_resources(context)
+
+    local firstVisible = safe_method(context, "firstBar")
+    local lastVisible = safe_method(context, "lastBar")
+    local from = math.max(S.first or 0, firstVisible or (S.first or 0))
+    local to = lastVisible or (S.source:size() - 1)
+    local top = safe_method(context, "top") or 10
+
+    for period = from, to do
+        local d1_idx = find_history_index_by_time(S.d1, S.source:date(period))
+        local d = build_day_record(d1_idx)
+        if d ~= nil then
+            local x = safe_method(context, "positionOfBar", period)
+            if x == nil then
+                x = safe_method(context, "positionOfDate", S.source:date(period))
+            end
+
+            if x ~= nil then
+                local y1 = top + 14
+                local y2 = y1 + clamp_positive(instance.parameters.WeekdayFontSize, 10) + 2
+
+                if instance.parameters.ShowWeekdayLabels then
+                    draw_text(context, S.draw.weekdayFont, weekday_label(S.source:date(period)), instance.parameters.WeekdayTextColor, x, y1)
+                end
+
+                if instance.parameters.ShowDayTypeLabels then
+                    local dayTypeText = ""
+                    local dayTypeColor = instance.parameters.InactiveTextColor
+                    if d.is_frd_trade_day_candidate or d.is_fgd_trade_day_candidate then
+                        dayTypeText = "TRADE"
+                        dayTypeColor = instance.parameters.TradeDayTextColor
+                    elseif d.is_frd_event_day then
+                        dayTypeText = "FRD"
+                        dayTypeColor = instance.parameters.FRDTextColor
+                    elseif d.is_fgd_event_day then
+                        dayTypeText = "FGD"
+                        dayTypeColor = instance.parameters.FGDTextColor
+                    elseif d.is_pump_day then
+                        dayTypeText = "PUMP"
+                    elseif d.is_dump_day then
+                        dayTypeText = "DUMP"
+                    end
+                    draw_text(context, S.draw.dayTypeFont, dayTypeText, dayTypeColor, x, y2)
+                end
+            end
+        end
+    end
 end
 
 function Update(period, mode)
