@@ -112,6 +112,8 @@ local function evaluateDayType(d1, dayIndex, atrLen, atrMult)
         pClose = d1.close[p],
         pRange = d1.high[p] - d1.low[p],
 
+        pAtr = calcATR(d1, p, atrLen),
+
         ppOpen = d1.open[pp],
         ppHigh = d1.high[pp],
         ppLow = d1.low[pp],
@@ -129,17 +131,31 @@ local function evaluateDayType(d1, dayIndex, atrLen, atrMult)
         return nil
     end
 
-    local threshold = day.atr * atrMult
-    local yChange = day.yClose - day.pClose
+    if day.pAtr == nil or day.pAtr <= 0 then
+        return nil
+    end
 
-    local dumpYesterday = yChange <= -threshold
-    local pumpYesterday = yChange >= threshold
+    local yThreshold = day.atr * atrMult
+    local pThreshold = day.pAtr * atrMult
 
-    local yFgd = pumpYesterday
-    local yFrd = dumpYesterday
+    -- Yesterday candle classification (y)
+    local dumpYesterday = (day.yClose < day.yOpen) and (day.yRange >= yThreshold)
+    local pumpYesterday = (day.yClose > day.yOpen) and (day.yRange >= yThreshold)
 
+    -- Previous day classification (p), used for two-day structure
+    local dumpPrevious = (day.pClose < day.pOpen) and (day.pRange >= pThreshold)
+    local pumpPrevious = (day.pClose > day.pOpen) and (day.pRange >= pThreshold)
+
+    -- Yesterday event day status: p + y structure
+    local yFgd = dumpPrevious and (day.yClose > day.yOpen)
+    local yFrd = pumpPrevious and (day.yClose < day.yOpen)
+
+    -- Today event day status: y + d structure
     local dFgd = dumpYesterday and (day.dClose > day.dOpen)
     local dFrd = pumpYesterday and (day.dClose < day.dOpen)
+
+    local eventToday = dFgd or dFrd
+    local tradeDayToday = (yFgd or yFrd) and (not eventToday)
 
     local bias = 0
     if dFgd then
@@ -155,7 +171,7 @@ local function evaluateDayType(d1, dayIndex, atrLen, atrMult)
         dFrd = dFrd,
         yFgd = yFgd,
         yFrd = yFrd,
-        tradeDayToday = yFgd or yFrd,
+        tradeDayToday = tradeDayToday,
         bias = bias
     }
 end
@@ -281,8 +297,8 @@ function Update(period, mode)
     end
 
     state.dayMarks[currentDateKey] = {
-        isFrd = result.yFrd,
-        isFgd = result.yFgd,
+        isFrd = result.dFrd,
+        isFgd = result.dFgd,
         isTradeDay = result.tradeDayToday
     }
 
