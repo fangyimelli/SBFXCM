@@ -75,7 +75,10 @@
 - `is_fgd_event_day`
 - `is_frd_trade_day_candidate`
 - `is_fgd_trade_day_candidate`
-- `has_valid_rectangle`
+- `is_trade_day`
+- `daytype_bias` / `day_bias`
+- `event_day_type` / `day_type_code`
+- `has_valid_rectangle`（=`rectangle_valid` 概念）
 - `rectangle_high`
 - `rectangle_low`
 - `rectangle_height`
@@ -99,46 +102,129 @@
 - `is_frd_trade_day_candidate`
 - `is_fgd_trade_day_candidate`
 
-以上僅作為 DayType 顯示來源，**不是第二套邏輯來源**（不得在顯示層重算事件/候選邏輯）。
+Label 顯示：
+- `FRD`
+- `FGD`
+- `Trade Day`
 
-## 5) 已實作 / 未實作
-### 已實作
-- Pump Day / Dump Day 判定
-- FRD / FGD event day 判定（僅 Pump/Dump + next day close color，不受 rectangle gating）
-- FRD / FGD trade-day candidate（僅由前一日 event 轉出）
-- rectangle valid / high / low / height / bar_count / start/end time
-- DayType 圖上 label：`FRD` / `FGD` / `Trade Day`
-- DayType rectangle debug display：`rectangleHigh` / `rectangleLow`
+---
 
-### 未實作（或尚未定版）
-- Entry rule（例如 5m EMA20）
-- 正式 scoring 規則（目前 `repeated_* / consolidation / three_levels` 僅供開發中參考）
-- Structure 層訊號（BOS/BIS/sweep）
-- HUD 管理
+## 4) 哪些功能屬於 Structure
 
-## 6) 驗證方式（圖上直接可見）
-在 DayType indicator 觀察下列 stream：
-1. Pump / Dump：
-   - `is_pump_day`（1=true, 0=false）
-   - `is_dump_day`（1=true, 0=false）
-2. Event day：
-   - `is_frd_event_day`
-   - `is_fgd_event_day`
-3. Trade-day candidate：
-   - `is_frd_trade_day_candidate`
-   - `is_fgd_trade_day_candidate`
-4. Rectangle debug：
-   - `has_valid_rectangle`
-   - `rectangle_high`
-   - `rectangle_low`
-   - `rectangle_height`
-   - `rectangle_bar_count`
-   - `rectangle_start_time` / `rectangle_end_time`
+Structure 目前負責：
+- `has_asia_range`
+- `has_asia_range_sweep_up`
+- `has_asia_range_sweep_down`
+- `has_session_sweep`
+- `has_bos`
+- `has_bearish_bis_below_rectangle`
+- `has_bullish_bis_above_rectangle`
+- `structure_state`
+- `structure_bias`
 
-另可在圖上按下列步驟檢查 DayType 可視化輸出：
-1. 新交易日起始 bar 可見 `weekday`。
-2. 有 setup 時，`weekday` 下方可見 `FRD` / `FGD` / `Trade Day`（可多行同日出現）。
-3. 開啟 `debug=true` 時，可見 `rectangleHigh` / `rectangleLow` 對應的 rectangle debug 線框。
-4. 無 setup 日時，僅 `weekday` 仍持續可見（不應空白）。
+以及把 DayType SSOT 結果轉成「structure_seen_*」可觀察 stream（只轉述，不重判 day/event）。
 
-以上 stream 在 false 狀態也會輸出 `0`，不會整塊空白，便於直接驗證。
+---
+
+## 5) 哪些功能屬於 Entry
+
+Entry 層目前正式落地：
+- **FRD trade-day**：bearish close back inside EMA20
+- **FGD trade-day**：bullish close back inside EMA20
+
+並輸出：
+- `frd_entry_ready` / `frd_entry_triggered` / `frd_entry_price`
+- `fgd_entry_ready` / `fgd_entry_triggered` / `fgd_entry_price`
+- `follow_through_score` / `follow_through_status`
+
+另外有 consume-only stream 用來確認 Entry 正在吃上游：
+- `entry_consumed_trade_day`
+- `entry_consumed_day_bias`
+- `entry_consumed_rectangle_valid`
+- `entry_consumed_structure_has_bos`
+- `entry_consumed_structure_session_sweep`
+
+---
+
+## 6) 哪些功能只屬於 HUD
+
+HUD 只做文字化狀態展示：
+- `hud_flow`
+- `hud_daytype_state`
+- `hud_structure_state`
+- `hud_entry_state`
+- `hud_score_state`
+- `hud_implementation_status`
+
+用途是讓交易圖上直接看到：
+- 現在資料流是否維持 DayType→Structure→Entry→HUD
+- 各層目前「已提供 / 部分提供 / 需看上游」
+
+---
+
+## 7) 哪些邏輯禁止放錯地方
+
+- Day/event 定義只能在 **DayType**
+- Structure 不可重定義 FRD/FGD/Trade Day
+- Entry 不可自己重建 day/event
+- HUD 不可重判上游邏輯、不可假裝 entry 已實作
+
+---
+
+## 8) 目前已落地 / 部分落地 / 未落地
+
+### 已落地
+- DayType SSOT（Pump/Dump/FRD/FGD/Trade Day + bias + rectangle 輸出）
+- DayType label（FRD/FGD/Trade Day）
+- rectangle debug 線框與 stream
+- Structure consume DayType 並輸出 structure stream
+- Entry 的 FRD/FGD trade-day EMA20 entry 規則
+- HUD 改為 display-only
+
+### 部分落地
+- scoring 仍以可視化/觀察為主，尚未是完整交易管理打分框架
+
+### 未落地
+- 完整 TP/SL/trade count/daily slot 的策略管理閉環（目前 HUD 仍偏資訊看板）
+
+---
+
+## 9) 目前 DayType 是否已成為唯一 SSOT
+
+**是。**
+
+目前 FRD/FGD/event/trade-day/day-bias/day-type-code 都由 DayType 生成，
+Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定義。
+
+---
+
+## 10) 後續維護規則（強制）
+
+後續只要修改任一 indicator，README 必須同步更新：
+- 實際新增了什麼
+- 放在哪一層
+- 是否違反責任邊界
+- 驗證方式如何在圖上看到
+
+---
+
+## 可驗證結果（圖上檢查）
+
+1. **FRD/FGD/Trade Day label**
+   - 掛上 `SB_DayType_FRD_FGD.lua`
+   - 每個新交易日先看 weekday
+   - 有 setup 時可見 `FRD` / `FGD` / `Trade Day`
+
+2. **rectangle debug 可視化**
+   - 在 DayType 開啟 `debug=true`
+   - 可看到 `rectangleHigh` / `rectangleLow` 文字與線框
+   - 同時可看 stream：`has_valid_rectangle`、`rectangle_high`、`rectangle_low`
+
+3. **確認下游不再重判 day/event**
+   - Structure 只看 `structure_seen_*` 與 DayType consume 結果
+   - Entry 的 ready/trigger 直接依 DayType trade-day + 上游結構狀態
+   - HUD 文案明確標示為 display-only
+
+4. **從 README 看責任邊界**
+   - 直接對照本檔第 2~7 章
+   - 每層「該做/不該做」皆已列出

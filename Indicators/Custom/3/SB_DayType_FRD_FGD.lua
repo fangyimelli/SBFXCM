@@ -1,4 +1,11 @@
-local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, draw={initialized=false, weekdayFont=nil, dayTypeFont=nil, debugFont=nil, neutralPen=nil, rectHighPen=nil, rectLowPen=nil}}
+local FONT_WEEKDAY = 10
+local FONT_DAYTYPE = 11
+local FONT_DEBUG = 12
+local PEN_NEUTRAL = 20
+local PEN_RECT_HIGH = 21
+local PEN_RECT_LOW = 22
+
+local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW}}
 local T = {}
 
 function Init()
@@ -26,12 +33,27 @@ function Init()
 end
 
 local function safe_method(obj, name, ...)
-    if obj == nil then return nil end
+    if obj == nil then return false, nil end
     local fn = obj[name]
-    if type(fn) ~= "function" then return nil end
+    if type(fn) ~= "function" then return false, nil end
     local ok, result = pcall(fn, obj, ...)
-    if not ok then return nil end
-    return result
+    if not ok then return false, nil end
+    return true, result
+end
+
+local function safe_value(obj, name, ...)
+    local ok, result = safe_method(obj, name, ...)
+    if ok then return result end
+    return nil
+end
+
+local function debug_output(msg)
+    if instance == nil or instance.parameters == nil or not instance.parameters.debug or msg == nil then return end
+    if core == nil or core.host == nil then return end
+    local text = "[SB_DayType_FRD_FGD] " .. tostring(msg)
+    local ok = safe_method(core.host, "trace", text)
+    if ok then return end
+    safe_method(core.host, "execute", "alertMessage", text)
 end
 
 local function clamp_positive(v, fallback)
@@ -97,32 +119,48 @@ local function get_day_type_color(label)
     return instance.parameters.InactiveTextColor
 end
 
-local function draw_text(context, font, text, color, x, y)
-    if context == nil or font == nil or text == nil or text == "" then return end
-    if safe_method(context, "drawText", font, text, color, -1, x, y, 0) ~= nil then return end
-    safe_method(context, "drawText", font, text, color, x, y)
+local function draw_text(context, fontId, text, color, x, y)
+    if context == nil or fontId == nil or text == nil or text == "" or x == nil or y == nil then return end
+
+    local fontSize = clamp_positive(instance.parameters.DayTypeFontSize, 10)
+    local fallbackW = math.max(1, #tostring(text) * fontSize)
+    local fallbackH = math.max(1, fontSize)
+    local okMeasure, w, h = pcall(function()
+        return context:measureText(fontId, text, 0)
+    end)
+
+    if not okMeasure then
+        w = fallbackW
+        h = fallbackH
+    end
+
+    w = math.max(1, tonumber(w) or fallbackW)
+    h = math.max(1, tonumber(h) or fallbackH)
+    safe_method(context, "drawText", fontId, text, color, -1, x, y, x + w, y + h, 0)
 end
 
 local function get_x_for_time(context, ts)
     if context == nil or ts == nil then return nil end
-    local x = safe_method(context, "positionOfDate", ts)
+    local x = safe_value(context, "positionOfDate", ts)
     if x ~= nil then return x end
-    return safe_method(context, "positionOfTime", ts)
+    return safe_value(context, "positionOfTime", ts)
 end
 
 local function get_y_for_price(context, price)
     if context == nil or price == nil then return nil end
-    local y = safe_method(context, "positionOfPrice", price)
+    local y = safe_value(context, "positionOfPrice", price)
     if y ~= nil then return y end
-    local pt = safe_method(context, "pointOfPrice", price)
+    local pt = safe_value(context, "pointOfPrice", price)
     if type(pt) == "table" then return pt.y end
     return nil
 end
 
-local function draw_line(context, pen, x1, y1, x2, y2)
-    if context == nil or pen == nil or x1 == nil or y1 == nil or x2 == nil or y2 == nil then return end
-    if safe_method(context, "drawLine", pen, x1, y1, x2, y2) ~= nil then return end
-    safe_method(context, "drawLine", x1, y1, x2, y2, pen)
+local function draw_line(context, penId, x1, y1, x2, y2)
+    if context == nil or penId == nil or x1 == nil or y1 == nil or x2 == nil or y2 == nil then return end
+    local ok = safe_method(context, "drawLine", penId, x1, y1, x2, y2)
+    if not ok then
+        safe_method(context, "drawLine", S.draw.neutralPen, x1, y1, x2, y2)
+    end
 end
 
 local function measure_text(context, font, text)
@@ -154,13 +192,31 @@ local function ensure_draw_resources(context)
     local weekdaySize = clamp_positive(instance.parameters.WeekdayFontSize, 10)
     local dayTypeSize = clamp_positive(instance.parameters.DayTypeFontSize, 10)
     local debugSize = math.max(8, clamp_positive(instance.parameters.DayTypeFontSize, 10) - 1)
-    S.draw.weekdayFont = safe_method(context, "createFont", "Arial", weekdaySize, false, false)
-    S.draw.dayTypeFont = safe_method(context, "createFont", "Arial", dayTypeSize, true, false)
-    S.draw.debugFont = safe_method(context, "createFont", "Arial", debugSize, false, false)
-    S.draw.neutralPen = safe_method(context, "createPen", 1, instance.parameters.InactiveTextColor)
-    S.draw.rectHighPen = safe_method(context, "createPen", 1, instance.parameters.RectangleHighDebugColor)
-    S.draw.rectLowPen = safe_method(context, "createPen", 1, instance.parameters.RectangleLowDebugColor)
-    S.draw.initialized = true
+    local weekdayPx = safe_value(context, "pointsToPixels", weekdaySize) or weekdaySize
+    local dayTypePx = safe_value(context, "pointsToPixels", dayTypeSize) or dayTypeSize
+    local debugPx = safe_value(context, "pointsToPixels", debugSize) or debugSize
+    local penWidth = safe_value(context, "pointsToPixels", 1) or 1
+    local solidStyle = safe_value(context, "convertPenStyle", core.LINE_SOLID) or core.LINE_SOLID
+
+    local okWeekdayFont = safe_method(context, "createFont", FONT_WEEKDAY, "Arial", weekdayPx, weekdayPx, 0)
+    local okDayTypeFont = safe_method(context, "createFont", FONT_DAYTYPE, "Arial", dayTypePx, dayTypePx, core.FONT_BOLD or 0)
+    local okDebugFont = safe_method(context, "createFont", FONT_DEBUG, "Arial", debugPx, debugPx, 0)
+
+    local okNeutralPen = safe_method(context, "createPen", PEN_NEUTRAL, solidStyle, penWidth, instance.parameters.InactiveTextColor)
+    local okRectHighPen = safe_method(context, "createPen", PEN_RECT_HIGH, solidStyle, penWidth, instance.parameters.RectangleHighDebugColor)
+    local okRectLowPen = safe_method(context, "createPen", PEN_RECT_LOW, solidStyle, penWidth, instance.parameters.RectangleLowDebugColor)
+
+    local fontsReady = okWeekdayFont and okDayTypeFont and okDebugFont
+    local pensReady = okNeutralPen and okRectHighPen and okRectLowPen
+    S.draw.initialized = fontsReady and pensReady
+
+    if not S.draw.initialized then
+        debug_output(string.format(
+            "draw resource init failed (fonts: weekday=%s dayType=%s debug=%s; pens: neutral=%s rectHigh=%s rectLow=%s)",
+            tostring(okWeekdayFont), tostring(okDayTypeFont), tostring(okDebugFont),
+            tostring(okNeutralPen), tostring(okRectHighPen), tostring(okRectLowPen)
+        ))
+    end
 end
 
 local function getHistory(instrument, tf, isBid)
@@ -402,6 +458,7 @@ function Prepare(nameOnly)
     T.fgdEvent = instance:addStream("is_fgd_event_day", core.Line, "FGD Event", "", core.rgb(0,180,0), S.first)
     T.frdTrade = instance:addStream("is_frd_trade_day_candidate", core.Line, "FRD Trade Candidate", "", core.rgb(255,140,0), S.first)
     T.fgdTrade = instance:addStream("is_fgd_trade_day_candidate", core.Line, "FGD Trade Candidate", "", core.rgb(255,200,0), S.first)
+    T.tradeDay = instance:addStream("is_trade_day", core.Line, "Trade Day", "", core.rgb(255,215,0), S.first)
 
     T.rectValid = instance:addStream("has_valid_rectangle", core.Line, "Rectangle Valid", "", core.rgb(135,206,250), S.first)
     T.rectHigh = instance:addStream("rectangle_high", core.Line, "Rectangle High", "", core.rgb(255,255,255), S.first)
@@ -412,7 +469,9 @@ function Prepare(nameOnly)
     T.rectEnd = instance:addStream("rectangle_end_time", core.Line, "Rectangle End Time", "", core.rgb(72,61,139), S.first)
 
     T.daytypeBias = instance:addStream("daytype_bias", core.Line, "DayType Bias", "", core.rgb(255,215,0), S.first)
+    T.dayBias = instance:addStream("day_bias", core.Line, "Day Bias", "", core.rgb(255,255,153), S.first)
     T.eventDayType = instance:addStream("event_day_type", core.Line, "Event Day Type", "", core.rgb(238,130,238), S.first)
+    T.dayTypeCode = instance:addStream("day_type_code", core.Line, "Day Type Code", "", core.rgb(199,21,133), S.first)
 
     T.repeatedPumpScore = instance:addStream("repeated_pump_score", core.Line, "Repeated Pump Score", "", core.rgb(60,179,113), S.first)
     T.repeatedDumpScore = instance:addStream("repeated_dump_score", core.Line, "Repeated Dump Score", "", core.rgb(205,92,92), S.first)
@@ -425,11 +484,11 @@ function Draw(stage, context)
 
     ensure_draw_resources(context)
 
-    local firstVisible = safe_method(context, "firstBar")
-    local lastVisible = safe_method(context, "lastBar")
+    local firstVisible = safe_value(context, "firstBar")
+    local lastVisible = safe_value(context, "lastBar")
     local from = math.max(S.first or 0, firstVisible or (S.first or 0))
     local to = lastVisible or (S.source:size() - 1)
-    local top = safe_method(context, "top") or 10
+    local top = safe_value(context, "top") or 10
     local baseYOffset = 8
     local linePadding = 2
     local _, weekdayMeasuredH = measure_text(context, S.draw.weekdayFont, "Wed")
@@ -442,9 +501,9 @@ function Draw(stage, context)
             local d1_idx = find_history_index_by_time(S.d1, S.source:date(period))
             local d = build_day_record(d1_idx)
             if d ~= nil then
-                local x = safe_method(context, "positionOfBar", period)
+                local x = safe_value(context, "positionOfBar", period)
                 if x == nil then
-                    x = safe_method(context, "positionOfDate", S.source:date(period))
+                    x = safe_value(context, "positionOfDate", S.source:date(period))
                 end
 
                 if x ~= nil then
@@ -502,6 +561,7 @@ function Update(period, mode)
     T.fgdEvent[period] = d.is_fgd_event_day and 1 or 0
     T.frdTrade[period] = d.is_frd_trade_day_candidate and 1 or 0
     T.fgdTrade[period] = d.is_fgd_trade_day_candidate and 1 or 0
+    T.tradeDay[period] = (d.is_frd_trade_day_candidate or d.is_fgd_trade_day_candidate) and 1 or 0
 
     T.rectValid[period] = d.has_valid_rectangle and 1 or 0
     T.rectHigh[period] = d.rectangle_high or 0
@@ -512,7 +572,9 @@ function Update(period, mode)
     T.rectEnd[period] = d.rectangle_end_time or 0
 
     T.daytypeBias[period] = d.daytype_bias or 0
+    T.dayBias[period] = d.daytype_bias or 0
     T.eventDayType[period] = d.event_day_type or 0
+    T.dayTypeCode[period] = (d.is_frd_event_day and -1) or (d.is_fgd_event_day and 1) or ((d.is_frd_trade_day_candidate and -2) or (d.is_fgd_trade_day_candidate and 2) or 0)
 
     T.repeatedPumpScore[period] = d.repeated_pump_score or 0
     T.repeatedDumpScore[period] = d.repeated_dump_score or 0
