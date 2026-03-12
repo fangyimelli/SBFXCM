@@ -5,7 +5,7 @@ local PEN_NEUTRAL = 20
 local PEN_RECT_HIGH = 21
 local PEN_RECT_LOW = 22
 
-local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW}}
+local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, dayMarks={}, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW}}
 local T = {}
 
 function Init()
@@ -17,6 +17,7 @@ function Init()
     indicator.parameters:addInteger("rectangle_lookback_bars", "Rectangle Lookback Bars", "", 8)
     indicator.parameters:addInteger("rectangle_min_contained_closes", "Rectangle Min Contained Closes", "", 6)
     indicator.parameters:addDouble("max_rectangle_height_atr", "Max Rectangle Height ATR", "", 1.2)
+    indicator.parameters:addDouble("atr_mult", "Pump/Dump ATR Mult", "", 1.0)
     indicator.parameters:addInteger("dayatrlen", "Day ATR Length", "", 14)
     indicator.parameters:addBoolean("ShowWeekdayLabels", "Show Weekday Labels", "", true)
     indicator.parameters:addBoolean("ShowDayTypeLabels", "Show DayType Labels", "", true)
@@ -96,16 +97,42 @@ function GetDayTypeLabels(period, dayRecord)
     if period == nil or dayRecord == nil then return {} end
 
     local labels = {}
-    if dayRecord.is_frd_event_day then
+    if dayRecord.isFrd or dayRecord.is_frd_event_day then
         labels[#labels + 1] = "FRD"
     end
-    if dayRecord.is_fgd_event_day then
+    if dayRecord.isFgd or dayRecord.is_fgd_event_day then
         labels[#labels + 1] = "FGD"
     end
-    if dayRecord.is_frd_trade_day_candidate or dayRecord.is_fgd_trade_day_candidate then
+    if dayRecord.isTradeDay or dayRecord.is_frd_trade_day_candidate or dayRecord.is_fgd_trade_day_candidate then
         labels[#labels + 1] = "Trade Day"
     end
     return labels
+end
+
+local function build_audit_lines(dayRecord)
+    if dayRecord == nil or dayRecord.audit == nil then return {} end
+    local audit = dayRecord.audit
+    local yn = function(v) return v and "Y" or "N" end
+
+    if dayRecord.isFgd or dayRecord.is_fgd_event_day then
+        return {
+            string.format("PrevDump:%s TodayUp:%s", yn(audit.prevDump), yn(audit.todayUp)),
+            string.format("yRange:%.5f Thr:%.5f", tonumber(audit.yRange) or 0, tonumber(audit.threshold) or 0)
+        }
+    end
+
+    if dayRecord.isFrd or dayRecord.is_frd_event_day then
+        return {
+            string.format("PrevPump:%s TodayDown:%s", yn(audit.prevPump), yn(audit.todayDown)),
+            string.format("yRange:%.5f Thr:%.5f", tonumber(audit.yRange) or 0, tonumber(audit.threshold) or 0)
+        }
+    end
+
+    if dayRecord.isTradeDay or dayRecord.is_trade_day then
+        return {string.format("From Prev Event:%s", yn(audit.fromPrevEvent))}
+    end
+
+    return {}
 end
 
 local function get_day_type_color(label)
@@ -376,17 +403,34 @@ local function build_day_record(day_idx)
     local prev_base = evaluate_pump_dump(S.d1, day_idx - 1)
     local today_open, today_close = S.d1.open[day_idx], S.d1.close[day_idx]
 
-    -- Phase-1: rectangle is debug display only; it does not gate FRD/FGD events.
-    local is_frd_event = prev_base ~= nil and prev_base.is_pump_day and today_close < today_open
-    local is_fgd_event = prev_base ~= nil and prev_base.is_dump_day and today_close > today_open
+    local atrLen = math.max(1, clamp_positive(instance.parameters.dayatrlen, 14))
+    local atrMult = tonumber(instance.parameters.atr_mult) or 1.0
+    if atrMult <= 0 then atrMult = 1.0 end
+    local yesterday_idx = day_idx - 1
+    local yOpen = S.d1.open[yesterday_idx]
+    local yClose = S.d1.close[yesterday_idx]
+    local yRange = (S.d1.high[yesterday_idx] or 0) - (S.d1.low[yesterday_idx] or 0)
+    local yAtr = calc_atr(S.d1, yesterday_idx, atrLen)
+    local threshold = (yAtr or 0) * atrMult
+    local rangePass = yAtr ~= nil and yAtr > 0 and yRange >= threshold
+
+    local prevDayWasDump = rangePass and yClose < yOpen
+    local prevDayWasPump = rangePass and yClose > yOpen
+    local todayUp = today_close > today_open
+    local todayDown = today_close < today_open
+
+    local is_fgd_event = prevDayWasDump and todayUp
+    local is_frd_event = prevDayWasPump and todayDown
 
     local prev_rec = nil
     if day_idx - 1 >= S.d1:first() then
         prev_rec = build_day_record(day_idx - 1)
     end
 
-    local is_frd_trade_candidate = prev_rec ~= nil and prev_rec.is_frd_event_day
-    local is_fgd_trade_candidate = prev_rec ~= nil and prev_rec.is_fgd_event_day
+    local from_prev_event = prev_rec ~= nil and (prev_rec.isFrd or prev_rec.isFgd or prev_rec.is_frd_event_day or prev_rec.is_fgd_event_day)
+    local is_trade_day = (not (is_frd_event or is_fgd_event)) and from_prev_event
+    local is_frd_trade_candidate = is_trade_day and prev_rec ~= nil and (prev_rec.isFrd or prev_rec.is_frd_event_day)
+    local is_fgd_trade_candidate = is_trade_day and prev_rec ~= nil and (prev_rec.isFgd or prev_rec.is_fgd_event_day)
 
     local event_day_type = 0
     if is_frd_event then
@@ -420,6 +464,10 @@ local function build_day_record(day_idx)
         is_dump_day = base.is_dump_day,
         is_frd_event_day = is_frd_event,
         is_fgd_event_day = is_fgd_event,
+        isFrd = is_frd_event,
+        isFgd = is_fgd_event,
+        isTradeDay = is_trade_day,
+        is_trade_day = is_trade_day,
         is_frd_trade_day_candidate = is_frd_trade_candidate,
         is_fgd_trade_day_candidate = is_fgd_trade_candidate,
         has_valid_rectangle = rect.valid,
@@ -435,8 +483,37 @@ local function build_day_record(day_idx)
         repeated_pump_score = repeated_pump_score,
         repeated_dump_score = repeated_dump_score,
         consolidation_score = consolidation_score,
-        three_levels_score = three_levels_score
+        three_levels_score = three_levels_score,
+        audit = {
+            prevDump = prevDayWasDump,
+            prevPump = prevDayWasPump,
+            todayUp = todayUp,
+            todayDown = todayDown,
+            atr = yAtr,
+            threshold = threshold,
+            yRange = yRange,
+            fromPrevEvent = from_prev_event
+        }
     }
+
+    local dateKey = day_key(S.d1:date(day_idx))
+    if dateKey ~= nil then
+        S.dayMarks[dateKey] = {
+            isFrd = rec.isFrd,
+            isFgd = rec.isFgd,
+            isTradeDay = rec.isTradeDay,
+            audit = {
+                prevDump = rec.audit.prevDump,
+                prevPump = rec.audit.prevPump,
+                todayUp = rec.audit.todayUp,
+                todayDown = rec.audit.todayDown,
+                atr = rec.audit.atr,
+                threshold = rec.audit.threshold,
+                yRange = rec.audit.yRange,
+                fromPrevEvent = rec.audit.fromPrevEvent
+            }
+        }
+    end
 
     S.day_cache[day_idx] = rec
     return rec
@@ -448,6 +525,8 @@ function Prepare(nameOnly)
     instance:name(profile:id() .. "(" .. S.source:name() .. ")")
     if nameOnly then return end
     instance:ownerDrawn(true)
+    S.day_cache = {}
+    S.dayMarks = {}
 
     S.d1 = getHistory(S.source:instrument(), "D1", S.source:isBid())
     S.m15 = getHistory(S.source:instrument(), "m15", S.source:isBid())
@@ -518,6 +597,14 @@ function Draw(stage, context)
                             local y = y1 + weekdayLineHeight + ((i - 1) * dayTypeLineHeight)
                             draw_text(context, S.draw.dayTypeFont, label, get_day_type_color(label), x, y)
                         end
+
+                        if instance.parameters.debug then
+                            local auditLines = build_audit_lines(d)
+                            for i = 1, #auditLines do
+                                local y = y1 + weekdayLineHeight + (#labels * dayTypeLineHeight) + ((i - 1) * dayTypeLineHeight)
+                                draw_text(context, S.draw.debugFont or S.draw.dayTypeFont, auditLines[i], instance.parameters.InactiveTextColor, x, y)
+                            end
+                        end
                     end
 
                     if d.rectangle_high ~= nil and d.rectangle_low ~= nil then
@@ -561,7 +648,7 @@ function Update(period, mode)
     T.fgdEvent[period] = d.is_fgd_event_day and 1 or 0
     T.frdTrade[period] = d.is_frd_trade_day_candidate and 1 or 0
     T.fgdTrade[period] = d.is_fgd_trade_day_candidate and 1 or 0
-    T.tradeDay[period] = (d.is_frd_trade_day_candidate or d.is_fgd_trade_day_candidate) and 1 or 0
+    T.tradeDay[period] = d.isTradeDay and 1 or 0
 
     T.rectValid[period] = d.has_valid_rectangle and 1 or 0
     T.rectHigh[period] = d.rectangle_high or 0
@@ -574,7 +661,7 @@ function Update(period, mode)
     T.daytypeBias[period] = d.daytype_bias or 0
     T.dayBias[period] = d.daytype_bias or 0
     T.eventDayType[period] = d.event_day_type or 0
-    T.dayTypeCode[period] = (d.is_frd_event_day and -1) or (d.is_fgd_event_day and 1) or ((d.is_frd_trade_day_candidate and -2) or (d.is_fgd_trade_day_candidate and 2) or 0)
+    T.dayTypeCode[period] = (d.isFrd and -1) or (d.isFgd and 1) or ((d.is_frd_trade_day_candidate and -2) or (d.is_fgd_trade_day_candidate and 2) or 0)
 
     T.repeatedPumpScore[period] = d.repeated_pump_score or 0
     T.repeatedDumpScore[period] = d.repeated_dump_score or 0
