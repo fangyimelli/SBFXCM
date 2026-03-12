@@ -176,24 +176,199 @@ local function yn(v)
     return v and "Y" or "N"
 end
 
+local function build_symmetry_rule_spec()
+    return {
+        FRD = {
+            gates = {
+                atr = {
+                    name = "ATR gate",
+                    expression = "eventRange >= eventAtr * eventAtrMult",
+                    operator = ">=",
+                    lhs = "eventRange",
+                    rhs = "eventAtr * eventAtrMult",
+                    thresholdSource = "eventAtrMult"
+                },
+                clv = {
+                    name = "CLV gate",
+                    expression = "eventClvLowPass",
+                    operator = "<=",
+                    lhs = "eventClv",
+                    rhs = "1 - eventCloseExtreme",
+                    thresholdSource = "eventCloseExtreme"
+                },
+                reclaim = {
+                    name = "reclaim gate",
+                    expression = "reclaimRatioFrd >= reclaimRatioMin",
+                    operator = ">=",
+                    lhs = "reclaimRatioFrd",
+                    rhs = "reclaimRatioMin",
+                    thresholdSource = "reclaimRatioMin"
+                }
+            },
+            qualityScore = {
+                {key = "prevRangePass", weight = 1},
+                {key = "prevClvHighPass", weight = 1},
+                {key = "prevBodyRatioPass", weight = 1},
+                {key = "eventRangePass", weight = 1},
+                {key = "eventClvLowPass", weight = 1},
+                {key = "reclaimPassFrd", weight = 1}
+            }
+        },
+        FGD = {
+            gates = {
+                atr = {
+                    name = "ATR gate",
+                    expression = "eventRange >= eventAtr * eventAtrMult",
+                    operator = ">=",
+                    lhs = "eventRange",
+                    rhs = "eventAtr * eventAtrMult",
+                    thresholdSource = "eventAtrMult"
+                },
+                clv = {
+                    name = "CLV gate",
+                    expression = "eventClvHighPass",
+                    operator = ">=",
+                    lhs = "eventClv",
+                    rhs = "eventCloseExtreme",
+                    thresholdSource = "eventCloseExtreme"
+                },
+                reclaim = {
+                    name = "reclaim gate",
+                    expression = "reclaimRatioFgd >= reclaimRatioMin",
+                    operator = ">=",
+                    lhs = "reclaimRatioFgd",
+                    rhs = "reclaimRatioMin",
+                    thresholdSource = "reclaimRatioMin"
+                }
+            },
+            qualityScore = {
+                {key = "prevRangePass", weight = 1},
+                {key = "prevClvLowPass", weight = 1},
+                {key = "prevBodyRatioPass", weight = 1},
+                {key = "eventRangePass", weight = 1},
+                {key = "eventClvHighPass", weight = 1},
+                {key = "reclaimPassFgd", weight = 1}
+            }
+        }
+    }
+end
+
 local function auditSymmetry()
-    local impulseAtrMult = tonumber(instance.parameters.impulseAtrMult) or 1.3
-    local eventAtrMult = tonumber(instance.parameters.eventAtrMult) or 0.6
-    local impulseCloseExtreme = tonumber(instance.parameters.impulseCloseExtreme) or 0.7
-    local eventCloseExtreme = tonumber(instance.parameters.eventCloseExtreme) or 0.7
-    local reclaimRatioMin = tonumber(instance.parameters.reclaimRatioMin) or 0.5
+    local spec = build_symmetry_rule_spec()
+    local frd = spec.FRD or {}
+    local fgd = spec.FGD or {}
+    local frdGates = frd.gates or {}
+    local fgdGates = fgd.gates or {}
+
+    local mismatchKeys = {}
+    local function add_mismatch(key, detail)
+        mismatchKeys[#mismatchKeys + 1] = {key = key, detail = detail}
+    end
+
+    local gateKeys = {"atr", "clv", "reclaim"}
+    for _, gateKey in ipairs(gateKeys) do
+        local frdGate = frdGates[gateKey]
+        local fgdGate = fgdGates[gateKey]
+        if frdGate == nil or fgdGate == nil then
+            add_mismatch("gate." .. gateKey .. ".missing", "missing gate definition")
+        else
+            if frdGate.name ~= fgdGate.name then
+                add_mismatch("gate." .. gateKey .. ".name", string.format("FRD=%s FGD=%s", tostring(frdGate.name), tostring(fgdGate.name)))
+            end
+            if frdGate.thresholdSource ~= fgdGate.thresholdSource then
+                add_mismatch("gate." .. gateKey .. ".thresholdSource", string.format("FRD=%s FGD=%s", tostring(frdGate.thresholdSource), tostring(fgdGate.thresholdSource)))
+            end
+            if gateKey == "atr" then
+                if frdGate.operator ~= fgdGate.operator or frdGate.lhs ~= fgdGate.lhs or frdGate.rhs ~= fgdGate.rhs then
+                    add_mismatch("gate.atr.expression", string.format("FRD=%s %s %s FGD=%s %s %s",
+                        tostring(frdGate.lhs), tostring(frdGate.operator), tostring(frdGate.rhs),
+                        tostring(fgdGate.lhs), tostring(fgdGate.operator), tostring(fgdGate.rhs)))
+                end
+            elseif gateKey == "clv" then
+                local mirrored = (frdGate.operator == "<=" and fgdGate.operator == ">=")
+                    and (frdGate.lhs == fgdGate.lhs)
+                    and (frdGate.thresholdSource == fgdGate.thresholdSource)
+                if not mirrored then
+                    add_mismatch("gate.clv.direction", string.format("FRD=%s %s %s FGD=%s %s %s",
+                        tostring(frdGate.lhs), tostring(frdGate.operator), tostring(frdGate.rhs),
+                        tostring(fgdGate.lhs), tostring(fgdGate.operator), tostring(fgdGate.rhs)))
+                end
+            elseif gateKey == "reclaim" then
+                local mirrored = (frdGate.operator == fgdGate.operator)
+                    and (frdGate.rhs == fgdGate.rhs)
+                    and (frdGate.lhs ~= fgdGate.lhs)
+                if not mirrored then
+                    add_mismatch("gate.reclaim.direction", string.format("FRD=%s %s %s FGD=%s %s %s",
+                        tostring(frdGate.lhs), tostring(frdGate.operator), tostring(frdGate.rhs),
+                        tostring(fgdGate.lhs), tostring(fgdGate.operator), tostring(fgdGate.rhs)))
+                end
+            end
+        end
+    end
+
+    local frdScore = frd.qualityScore or {}
+    local fgdScore = fgd.qualityScore or {}
+    if #frdScore ~= #fgdScore then
+        add_mismatch("qualityScore.length", string.format("FRD=%d FGD=%d", #frdScore, #fgdScore))
+    else
+        local expectedPairs = {
+            prevRangePass = "prevRangePass",
+            prevClvHighPass = "prevClvLowPass",
+            prevBodyRatioPass = "prevBodyRatioPass",
+            eventRangePass = "eventRangePass",
+            eventClvLowPass = "eventClvHighPass",
+            reclaimPassFrd = "reclaimPassFgd"
+        }
+        for idx = 1, #frdScore do
+            local frdItem = frdScore[idx]
+            local fgdItem = fgdScore[idx]
+            if frdItem == nil or fgdItem == nil then
+                add_mismatch("qualityScore.item." .. idx, "missing quality score item")
+            else
+                local expectedKey = expectedPairs[frdItem.key]
+                if expectedKey ~= fgdItem.key then
+                    add_mismatch("qualityScore.item." .. idx .. ".key", string.format("FRD=%s expectedFGD=%s actualFGD=%s",
+                        tostring(frdItem.key), tostring(expectedKey), tostring(fgdItem.key)))
+                end
+                if frdItem.weight ~= fgdItem.weight then
+                    add_mismatch("qualityScore.item." .. idx .. ".weight", string.format("FRD=%s FGD=%s",
+                        tostring(frdItem.weight), tostring(fgdItem.weight)))
+                end
+            end
+        end
+    end
 
     local audit = {
-        atrThresholdSymmetric = impulseAtrMult > 0 and eventAtrMult > 0,
-        clvDirectionSymmetric = impulseCloseExtreme >= 0.5 and eventCloseExtreme >= 0.5,
-        reclaimSymmetric = reclaimRatioMin >= 0,
+        ruleSpec = spec,
+        gateKeys = gateKeys,
+        mismatchKeys = mismatchKeys,
+        atrThresholdSymmetric = true,
+        clvDirectionSymmetric = true,
+        reclaimSymmetric = true,
         scoreSymmetric = true
     }
-    audit.ok = audit.atrThresholdSymmetric and audit.clvDirectionSymmetric and audit.reclaimSymmetric and audit.scoreSymmetric
+
+    for _, mismatch in ipairs(mismatchKeys) do
+        if mismatch.key ~= nil then
+            if string.find(mismatch.key, "gate%.atr") == 1 then audit.atrThresholdSymmetric = false end
+            if string.find(mismatch.key, "gate%.clv") == 1 then audit.clvDirectionSymmetric = false end
+            if string.find(mismatch.key, "gate%.reclaim") == 1 then audit.reclaimSymmetric = false end
+            if string.find(mismatch.key, "qualityScore") == 1 then audit.scoreSymmetric = false end
+        end
+    end
+
+    audit.ok = (#mismatchKeys == 0)
     S.symmetryAudit = audit
 
-    if instance.parameters.debug and not audit.ok then
-        debug_output("AUDIT WARNING: FRD/FGD asymmetry detected")
+    if instance.parameters.debug then
+        if audit.ok then
+            debug_output("AUDIT OK: FRD/FGD rule structures are symmetric")
+        else
+            debug_output("AUDIT WARNING: FRD/FGD asymmetry detected in rule structures")
+            for _, mismatch in ipairs(mismatchKeys) do
+                debug_output(string.format("AUDIT DIFF %s -> %s", tostring(mismatch.key), tostring(mismatch.detail)))
+            end
+        end
     end
     return audit
 end
