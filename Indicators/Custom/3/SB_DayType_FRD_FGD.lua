@@ -20,10 +20,12 @@ function Init()
     indicator.parameters:addDouble("atr_mult", "Pump/Dump ATR Mult", "", 1.0)
     indicator.parameters:addInteger("dayatrlen", "Day ATR Length", "", 14)
     indicator.parameters:addBoolean("enablequality", "Enable Quality Filter", "", true)
-    indicator.parameters:addDouble("qualityatrmult", "Quality Prev Day ATR Mult", "", 1.3)
-    indicator.parameters:addDouble("qualityeventatrmult", "Quality Event Day ATR Mult", "", 0.6)
-    indicator.parameters:addDouble("qualitycloseextreme", "Quality Close Extreme Ratio", "", 0.7)
-    indicator.parameters:addDouble("qualityreclaimratio", "Quality Reclaim Ratio", "", 0.5)
+    indicator.parameters:addDouble("impulseAtrMult", "Impulse ATR Mult", "", 1.3)
+    indicator.parameters:addDouble("impulseCloseExtreme", "Impulse Close Extreme", "", 0.7)
+    indicator.parameters:addDouble("impulseBodyRatioMin", "Impulse Body Ratio Min", "", 0.5)
+    indicator.parameters:addDouble("eventAtrMult", "Event ATR Mult", "", 0.6)
+    indicator.parameters:addDouble("eventCloseExtreme", "Event Close Extreme", "", 0.7)
+    indicator.parameters:addDouble("reclaimRatioMin", "Reclaim Ratio Min", "", 0.5)
     indicator.parameters:addInteger("qualityscoremin", "Quality Min Score For +", "", 4)
     indicator.parameters:addBoolean("showqualityaudit", "Show Quality Audit", "", false)
     indicator.parameters:addBoolean("showauditpanel", "Show Audit Panel", "", false)
@@ -132,17 +134,15 @@ local function build_audit_lines(dayRecord)
         return {"From:" .. tostring(dayRecord.tradeFromRule or "N/A")}
     end
 
-    if not (dayRecord.isFrd or dayRecord.isFgd) then return {} end
+    if not (dayRecord.isFrd or dayRecord.isFgd or dayRecord.nearMissFrd or dayRecord.nearMissFgd) then return {} end
 
     local prevText = dayRecord.prevIsPump and "Pump" or (dayRecord.prevIsDump and "Dump" or "Neutral")
     local eventText = dayRecord.eventDown and "Down" or (dayRecord.eventUp and "Up" or "Flat")
-    local ruleText = dayRecord.isFrd and "FRD" or "FGD"
-    return {
-        "Prev:" .. prevText,
-        "Event:" .. eventText,
-        "Rule:" .. ruleText,
-        string.format("Q:%d(%s)", tonumber(dayRecord.qualityScore) or 0, dayRecord.qualityGrade or "")
-    }
+    local ruleText = dayRecord.isFrd and "FRD" or (dayRecord.isFgd and "FGD" or "Near")
+    local lines = {"Prev:" .. prevText, "Event:" .. eventText, "Rule:" .. ruleText, string.format("Q:%d(%s)", tonumber(dayRecord.qualityScore) or 0, dayRecord.qualityGrade or "")}
+    if dayRecord.nearMissFrd then lines[#lines + 1] = "Near FRD" end
+    if dayRecord.nearMissFgd then lines[#lines + 1] = "Near FGD" end
+    return lines
 end
 
 local function build_audit_panel_lines(lastDayIdx)
@@ -176,25 +176,30 @@ local function yn(v)
     return v and "Y" or "N"
 end
 
-local function audit_symmetry()
-    local qualityCloseExtreme = tonumber(instance.parameters.qualitycloseextreme) or 0.7
-    local qualityReclaimRatio = tonumber(instance.parameters.qualityreclaimratio) or 0.5
-    local qualityEventAtrMult = tonumber(instance.parameters.qualityeventatrmult) or 0.6
-    local qualityAtrMult = tonumber(instance.parameters.qualityatrmult) or 1.3
+local function auditSymmetry()
+    local impulseAtrMult = tonumber(instance.parameters.impulseAtrMult) or 1.3
+    local eventAtrMult = tonumber(instance.parameters.eventAtrMult) or 0.6
+    local impulseCloseExtreme = tonumber(instance.parameters.impulseCloseExtreme) or 0.7
+    local eventCloseExtreme = tonumber(instance.parameters.eventCloseExtreme) or 0.7
+    local reclaimRatioMin = tonumber(instance.parameters.reclaimRatioMin) or 0.5
 
     local audit = {
-        thresholdsMatch = qualityCloseExtreme >= 0 and qualityReclaimRatio >= 0 and qualityEventAtrMult > 0 and qualityAtrMult > 0,
-        clvDirectionSymmetric = true,
-        reclaimSymmetric = true,
+        atrThresholdSymmetric = impulseAtrMult > 0 and eventAtrMult > 0,
+        clvDirectionSymmetric = impulseCloseExtreme >= 0.5 and eventCloseExtreme >= 0.5,
+        reclaimSymmetric = reclaimRatioMin >= 0,
         scoreSymmetric = true
     }
-    audit.ok = audit.thresholdsMatch and audit.clvDirectionSymmetric and audit.reclaimSymmetric and audit.scoreSymmetric
+    audit.ok = audit.atrThresholdSymmetric and audit.clvDirectionSymmetric and audit.reclaimSymmetric and audit.scoreSymmetric
     S.symmetryAudit = audit
 
     if instance.parameters.debug and not audit.ok then
         debug_output("AUDIT WARNING: FRD/FGD asymmetry detected")
     end
     return audit
+end
+
+local function audit_symmetry()
+    return auditSymmetry()
 end
 
 local function build_audit_stats(lastDayIdx, lookback)
@@ -558,123 +563,108 @@ local function build_day_record(day_idx)
     if S.day_cache[day_idx] ~= nil then return S.day_cache[day_idx] end
 
     local rect = eval_rectangle(S.d1, S.m15, day_idx)
-
-    local eventOpen, eventClose = S.d1.open[day_idx], S.d1.close[day_idx]
-    local eventHigh, eventLow = S.d1.high[day_idx], S.d1.low[day_idx]
-
-    local atrLen = math.max(1, clamp_positive(instance.parameters.dayatrlen, 14))
-    local enableQuality = instance.parameters.enablequality
-    local qualityAtrMult = tonumber(instance.parameters.qualityatrmult) or 1.3
-    local qualityEventAtrMult = tonumber(instance.parameters.qualityeventatrmult) or 0.6
-    local qualityCloseExtreme = tonumber(instance.parameters.qualitycloseextreme) or 0.7
-    local qualityReclaimRatio = tonumber(instance.parameters.qualityreclaimratio) or 0.5
-    local qualityScoreMin = math.max(1, clamp_positive(instance.parameters.qualityscoremin, 4))
     local epsilon = 0.0000001
+    local atrLen = math.max(1, clamp_positive(instance.parameters.dayatrlen, 14))
+    local qualityScoreMin = math.max(1, clamp_positive(instance.parameters.qualityscoremin, 4))
+
+    local impulseAtrMult = tonumber(instance.parameters.impulseAtrMult) or 1.3
+    local impulseCloseExtreme = tonumber(instance.parameters.impulseCloseExtreme) or 0.7
+    local impulseBodyRatioMin = tonumber(instance.parameters.impulseBodyRatioMin) or 0.5
+    local eventAtrMult = tonumber(instance.parameters.eventAtrMult) or 0.6
+    local eventCloseExtreme = tonumber(instance.parameters.eventCloseExtreme) or 0.7
+    local reclaimRatioMin = tonumber(instance.parameters.reclaimRatioMin) or 0.5
 
     local prev_idx = day_idx - 1
-    local prevOpen = S.d1.open[prev_idx]
-    local prevClose = S.d1.close[prev_idx]
-    local prevHigh = S.d1.high[prev_idx]
-    local prevLow = S.d1.low[prev_idx]
+    local eventOpen, eventHigh, eventLow, eventClose = S.d1.open[day_idx], S.d1.high[day_idx], S.d1.low[day_idx], S.d1.close[day_idx]
+    local prevOpen, prevHigh, prevLow, prevClose = S.d1.open[prev_idx], S.d1.high[prev_idx], S.d1.low[prev_idx], S.d1.close[prev_idx]
+
     local prevRange = (prevHigh or 0) - (prevLow or 0)
     local prevAtr = calc_atr(S.d1, prev_idx, atrLen)
+    local prevClv = (prevClose - prevLow) / math.max(prevRange, epsilon)
+    local prevBody = math.abs(prevClose - prevOpen)
+    local prevBodyRatio = prevBody / math.max(prevRange, epsilon)
 
     local eventRange = (eventHigh or 0) - (eventLow or 0)
     local eventAtr = calc_atr(S.d1, day_idx, atrLen)
+    local eventClv = (eventClose - eventLow) / math.max(eventRange, epsilon)
 
-    -- Layer A: Previous Day Classification Audit
-    local prevBullBody = prevClose > prevOpen
-    local prevBearBody = prevClose < prevOpen
-    local prevClv = (prevClose - prevLow) / math.max((prevHigh - prevLow), epsilon)
-    local prevRangePass = prevAtr ~= nil and prevAtr > 0 and prevRange >= (prevAtr * qualityAtrMult)
-    local prevClvHighPass = prevClv >= qualityCloseExtreme
-    local prevClvLowPass = prevClv <= (1 - qualityCloseExtreme)
-    local prevIsPump = prevBullBody and prevRangePass and prevClvHighPass
-    local prevIsDump = prevBearBody and prevRangePass and prevClvLowPass
+    -- Layer A: Previous Day Impulse Classification
+    local prevRangePass = prevAtr ~= nil and prevAtr > 0 and prevRange >= (prevAtr * impulseAtrMult)
+    local prevClvHighPass = prevClv >= impulseCloseExtreme
+    local prevClvLowPass = prevClv <= (1 - impulseCloseExtreme)
+    local prevBodyRatioPass = prevBodyRatio >= impulseBodyRatioMin
+    local prevIsPump = (prevClose > prevOpen) and prevRangePass and prevClvHighPass and prevBodyRatioPass
+    local prevIsDump = (prevClose < prevOpen) and prevRangePass and prevClvLowPass and prevBodyRatioPass
 
-    -- Layer B: Event Day Classification Audit
+    -- Layer B: Event Day Reversal Classification
     local eventUp = eventClose > eventOpen
     local eventDown = eventClose < eventOpen
-    local eventClv = (eventClose - eventLow) / math.max((eventHigh - eventLow), epsilon)
-    local eventRangePass = eventAtr ~= nil and eventAtr > 0 and eventRange >= (eventAtr * qualityEventAtrMult)
-    local eventClvHighPass = eventClv >= qualityCloseExtreme
-    local eventClvLowPass = eventClv <= (1 - qualityCloseExtreme)
+    local eventRangePass = eventAtr ~= nil and eventAtr > 0 and eventRange >= (eventAtr * eventAtrMult)
+    local eventClvHighPass = eventClv >= eventCloseExtreme
+    local eventClvLowPass = eventClv <= (1 - eventCloseExtreme)
 
-    local prev_rec = nil
-    if day_idx - 1 >= S.d1:first() then
-        prev_rec = build_day_record(day_idx - 1)
-    end
+    local prevBodyHigh = math.max(prevOpen, prevClose)
+    local prevBodyLow = math.min(prevOpen, prevClose)
+    local prevBodySize = math.max(prevBodyHigh - prevBodyLow, epsilon)
+    local reclaimRatioFgd = (eventClose - prevBodyLow) / prevBodySize
+    local reclaimRatioFrd = (prevBodyHigh - eventClose) / prevBodySize
+    local reclaimPassFgd = reclaimRatioFgd >= reclaimRatioMin
+    local reclaimPassFrd = reclaimRatioFrd >= reclaimRatioMin
 
-    local bodyHigh = math.max(prevOpen, prevClose)
-    local bodyLow = math.min(prevOpen, prevClose)
-    local bodySize = math.max(bodyHigh - bodyLow, epsilon)
+    local basicFgd = prevIsDump and eventUp and eventRangePass and eventClvHighPass
+    local basicFrd = prevIsPump and eventDown and eventRangePass and eventClvLowPass
 
-    local reclaimRatioFgd = (eventClose - bodyLow) / bodySize
-    local reclaimRatioFrd = (bodyHigh - eventClose) / bodySize
-    local reclaimPassFgd = reclaimRatioFgd >= qualityReclaimRatio
-    local reclaimPassFrd = reclaimRatioFrd >= qualityReclaimRatio
+    local qualityScoreFgd = 0
+    if prevRangePass then qualityScoreFgd = qualityScoreFgd + 1 end
+    if prevClvLowPass then qualityScoreFgd = qualityScoreFgd + 1 end
+    if prevBodyRatioPass then qualityScoreFgd = qualityScoreFgd + 1 end
+    if eventRangePass then qualityScoreFgd = qualityScoreFgd + 1 end
+    if eventClvHighPass then qualityScoreFgd = qualityScoreFgd + 1 end
+    if reclaimPassFgd then qualityScoreFgd = qualityScoreFgd + 1 end
 
-    -- Layer C: Basic / Qualified Event Day
-    local basicFgd = prevIsDump and eventUp
-    local basicFrd = prevIsPump and eventDown
-    local isFgdEvent = basicFgd and eventRangePass and eventClvHighPass and reclaimPassFgd
-    local isFrdEvent = basicFrd and eventRangePass and eventClvLowPass and reclaimPassFrd
+    local qualityScoreFrd = 0
+    if prevRangePass then qualityScoreFrd = qualityScoreFrd + 1 end
+    if prevClvHighPass then qualityScoreFrd = qualityScoreFrd + 1 end
+    if prevBodyRatioPass then qualityScoreFrd = qualityScoreFrd + 1 end
+    if eventRangePass then qualityScoreFrd = qualityScoreFrd + 1 end
+    if eventClvLowPass then qualityScoreFrd = qualityScoreFrd + 1 end
+    if reclaimPassFrd then qualityScoreFrd = qualityScoreFrd + 1 end
 
-    local prevClvPass = (basicFgd and prevClvLowPass) or (basicFrd and prevClvHighPass) or false
-    local eventClvPass = (basicFgd and eventClvHighPass) or (basicFrd and eventClvLowPass) or false
-    local reclaimPass = (basicFgd and reclaimPassFgd) or (basicFrd and reclaimPassFrd) or false
+    local qualityGradeFgd = qualityScoreFgd >= 6 and "A" or (qualityScoreFgd >= 5 and "B" or (qualityScoreFgd >= 4 and "C" or ""))
+    local qualityGradeFrd = qualityScoreFrd >= 6 and "A" or (qualityScoreFrd >= 5 and "B" or (qualityScoreFrd >= 4 and "C" or ""))
 
-    -- Layer D: Quality Classification (built on event day already identified above)
-    local strongPrevDay = prevRangePass
-    local extremePrevClose = (prevIsPump and prevClvHighPass) or (prevIsDump and prevClvLowPass)
-    local strongEventDay = (basicFrd or basicFgd) and eventRangePass
-    local extremeEventClose = (basicFgd and eventClvHighPass) or (basicFrd and eventClvLowPass)
+    -- Layer C: Qualified SB Event
+    local qualifiedFgd = basicFgd and reclaimPassFgd and qualityScoreFgd >= qualityScoreMin
+    local qualifiedFrd = basicFrd and reclaimPassFrd and qualityScoreFrd >= qualityScoreMin
 
-    local reclaimEnough = reclaimPass
-    local reclaimRatio = basicFgd and reclaimRatioFgd or (basicFrd and reclaimRatioFrd or 0)
+    local isFgdEvent = basicFgd
+    local isFrdEvent = basicFrd
 
-    local qualityScore = 0
-    if strongPrevDay then qualityScore = qualityScore + 1 end
-    if extremePrevClose then qualityScore = qualityScore + 1 end
-    if strongEventDay then qualityScore = qualityScore + 1 end
-    if extremeEventClose then qualityScore = qualityScore + 1 end
-    if reclaimEnough then qualityScore = qualityScore + 1 end
-
-    local qualityGrade = ""
-    if qualityScore >= 5 then qualityGrade = "A"
-    elseif qualityScore == 4 then qualityGrade = "B"
-    elseif qualityScore == 3 then qualityGrade = "C" end
-
-    local isHighQualityFrd = enableQuality and isFrdEvent and qualityScore >= qualityScoreMin
-    local isHighQualityFgd = enableQuality and isFgdEvent and qualityScore >= qualityScoreMin
-
-    -- Layer C: Next Day Classification
-    local prevWasEvent = prev_rec ~= nil and (prev_rec.isFrd or prev_rec.isFgd)
+    -- Layer D: Next Day Trade Day
+    local prev_rec = (day_idx - 1 >= S.d1:first()) and build_day_record(day_idx - 1) or nil
+    local prevWasEvent = prev_rec ~= nil and (prev_rec.basicFrd or prev_rec.basicFgd)
     local isTradeDay = (not isFrdEvent) and (not isFgdEvent) and prevWasEvent
-    local isFrdTradeCandidate = isTradeDay and prev_rec ~= nil and prev_rec.isFrd
-    local isFgdTradeCandidate = isTradeDay and prev_rec ~= nil and prev_rec.isFgd
+    local isFrdTradeCandidate = isTradeDay and prev_rec ~= nil and prev_rec.basicFrd
+    local isFgdTradeCandidate = isTradeDay and prev_rec ~= nil and prev_rec.basicFgd
     local tradeFromRule = isFrdTradeCandidate and "FRD" or (isFgdTradeCandidate and "FGD" or nil)
 
-    local event_day_type = isFrdEvent and -1 or (isFgdEvent and 1 or 0)
-
-    local repeated_pump_score = prevIsPump and 1 or 0
-    local repeated_dump_score = prevIsDump and 1 or 0
-
-    local consolidation_score = 0
-    if rect.valid then
-        consolidation_score = rect.contained >= (instance.parameters.rectangle_min_contained_closes + 1) and 2 or 1
+    local nearMissFrd = false
+    local nearMissFgd = false
+    local missCountFrd = 0
+    local missCountFgd = 0
+    if prevIsPump and eventDown then
+        if not eventRangePass then missCountFrd = missCountFrd + 1 end
+        if not eventClvLowPass then missCountFrd = missCountFrd + 1 end
+        if not reclaimPassFrd then missCountFrd = missCountFrd + 1 end
+        if qualityScoreFrd < qualityScoreMin then missCountFrd = missCountFrd + 1 end
+        nearMissFrd = (missCountFrd == 1) and (not basicFrd or not qualifiedFrd)
     end
-
-    local three_levels_score = 0
-    if day_idx - 5 >= S.d1:first() then
-        local wk_h = S.d1.high[day_idx - 5]
-        local wk_l = S.d1.low[day_idx - 5]
-        if S.d1.high[day_idx] > wk_h or S.d1.low[day_idx] < wk_l then
-            three_levels_score = 1
-        end
-        if (S.d1.high[day_idx] > wk_h and eventClose < eventOpen) or (S.d1.low[day_idx] < wk_l and eventClose > eventOpen) then
-            three_levels_score = 2
-        end
+    if prevIsDump and eventUp then
+        if not eventRangePass then missCountFgd = missCountFgd + 1 end
+        if not eventClvHighPass then missCountFgd = missCountFgd + 1 end
+        if not reclaimPassFgd then missCountFgd = missCountFgd + 1 end
+        if qualityScoreFgd < qualityScoreMin then missCountFgd = missCountFgd + 1 end
+        nearMissFgd = (missCountFgd == 1) and (not basicFgd or not qualifiedFgd)
     end
 
     local rec = {
@@ -683,175 +673,86 @@ local function build_day_record(day_idx)
         prevDateKey = day_key(S.d1:date(prev_idx)),
         nextDateKey = day_idx + 1 <= S.d1:size() - 1 and day_key(S.d1:date(day_idx + 1)) or nil,
         dateLabel = format_date_key(day_key(S.d1:date(day_idx))),
-        prevOpen = prevOpen,
-        prevHigh = prevHigh,
-        prevLow = prevLow,
-        prevClose = prevClose,
-        prevRange = prevRange,
-        prevAtr = prevAtr,
-        prevClv = prevClv,
-        eventOpen = eventOpen,
-        eventHigh = eventHigh,
-        eventLow = eventLow,
-        eventClose = eventClose,
-        eventRange = eventRange,
-        eventAtr = eventAtr,
-        eventClv = eventClv,
-        prevIsPump = prevIsPump,
-        prevIsDump = prevIsDump,
-        prevBullBody = prevBullBody,
-        prevBearBody = prevBearBody,
-        prevRangePass = prevRangePass,
-        prevClvHighPass = prevClvHighPass,
-        prevClvLowPass = prevClvLowPass,
-        eventUp = eventUp,
-        eventDown = eventDown,
-        eventRangePass = eventRangePass,
-        eventClvHighPass = eventClvHighPass,
-        eventClvLowPass = eventClvLowPass,
-        reclaimPassFgd = reclaimPassFgd,
-        reclaimPassFrd = reclaimPassFrd,
-        basicFgd = basicFgd,
-        basicFrd = basicFrd,
-        prevClvPass = prevClvPass,
-        eventClvPass = eventClvPass,
-        reclaimPass = reclaimPass,
-        is_pump_day = prevIsPump,
-        is_dump_day = prevIsDump,
-        is_frd_event_day = isFrdEvent,
-        is_fgd_event_day = isFgdEvent,
-        isFrd = isFrdEvent,
-        isFgd = isFgdEvent,
+
+        prevOpen = prevOpen, prevHigh = prevHigh, prevLow = prevLow, prevClose = prevClose,
+        prevRange = prevRange, prevAtr = prevAtr, prevClv = prevClv, prevBodyRatio = prevBodyRatio,
+        eventOpen = eventOpen, eventHigh = eventHigh, eventLow = eventLow, eventClose = eventClose,
+        eventRange = eventRange, eventAtr = eventAtr, eventClv = eventClv,
+
+        prevIsPump = prevIsPump, prevIsDump = prevIsDump,
+        basicFrd = basicFrd, basicFgd = basicFgd,
+        qualifiedFrd = qualifiedFrd, qualifiedFgd = qualifiedFgd,
         isTradeDay = isTradeDay,
-        is_trade_day = isTradeDay,
-        is_frd_trade_day_candidate = isFrdTradeCandidate,
-        is_fgd_trade_day_candidate = isFgdTradeCandidate,
-        isTradeCandidateFrd = isFrdTradeCandidate,
-        isTradeCandidateFgd = isFgdTradeCandidate,
+
+        reclaimRatioFrd = reclaimRatioFrd, reclaimRatioFgd = reclaimRatioFgd,
+        qualityScoreFrd = qualityScoreFrd, qualityScoreFgd = qualityScoreFgd,
+        qualityGradeFrd = qualityGradeFrd, qualityGradeFgd = qualityGradeFgd,
+
+        eventUp = eventUp, eventDown = eventDown,
+        eventRangePass = eventRangePass, eventClvHighPass = eventClvHighPass, eventClvLowPass = eventClvLowPass,
+        prevRangePass = prevRangePass, prevBodyRatioPass = prevBodyRatioPass, prevClvHighPass = prevClvHighPass, prevClvLowPass = prevClvLowPass,
+        reclaimPassFrd = reclaimPassFrd, reclaimPassFgd = reclaimPassFgd,
+        prevClvPass = (basicFrd and prevClvHighPass) or (basicFgd and prevClvLowPass) or false,
+        reclaimPass = (basicFrd and reclaimPassFrd) or (basicFgd and reclaimPassFgd) or false,
+
+        nearMissFrd = nearMissFrd, nearMissFgd = nearMissFgd,
+        isFrd = isFrdEvent, isFgd = isFgdEvent,
+        isHighQualityFrd = qualifiedFrd, isHighQualityFgd = qualifiedFgd,
+        is_pump_day = prevIsPump, is_dump_day = prevIsDump,
+        is_frd_event_day = isFrdEvent, is_fgd_event_day = isFgdEvent,
+        is_frd_trade_day_candidate = isFrdTradeCandidate, is_fgd_trade_day_candidate = isFgdTradeCandidate,
         tradeFromRule = tradeFromRule,
-        isHighQualityFgd = isHighQualityFgd,
-        isHighQualityFrd = isHighQualityFrd,
-        reclaimRatio = reclaimRatio,
-        qualityScore = qualityScore,
-        qualityGrade = qualityGrade,
-        has_valid_rectangle = rect.valid,
-        rectangle_high = rect.high,
-        rectangle_low = rect.low,
-        rectangle_height = rect.height,
-        rectangle_bar_count = rect.bar_count,
-        rectangle_start_time = rect.start_time,
-        rectangle_end_time = rect.end_time,
-        rectangle_contained_closes = rect.contained,
+        qualityScore = isFrdEvent and qualityScoreFrd or (isFgdEvent and qualityScoreFgd or 0),
+        qualityGrade = isFrdEvent and qualityGradeFrd or (isFgdEvent and qualityGradeFgd or ""),
+
+        has_valid_rectangle = rect.valid, rectangle_high = rect.high, rectangle_low = rect.low,
+        rectangle_height = rect.height, rectangle_bar_count = rect.bar_count, rectangle_start_time = rect.start_time, rectangle_end_time = rect.end_time,
         daytype_bias = prevIsPump and 1 or (prevIsDump and -1 or 0),
-        event_day_type = event_day_type,
-        repeated_pump_score = repeated_pump_score,
-        repeated_dump_score = repeated_dump_score,
-        consolidation_score = consolidation_score,
-        three_levels_score = three_levels_score,
-        audit = {
-            prevDump = prevIsDump,
-            prevPump = prevIsPump,
-            todayUp = eventUp,
-            todayDown = eventDown,
-            isReversalAttempt = isFrdEvent or isFgdEvent,
-            prevRange = prevRange,
-            prevAtr = prevAtr,
-            prevCloseLocation = prevClv,
-            eventRange = eventRange,
-            eventAtr = eventAtr,
-            eventCloseLocation = eventClv,
-            reclaimRatio = reclaimRatio,
-            strongPrevDay = strongPrevDay,
-            extremePrevClose = extremePrevClose,
-            strongEventDay = strongEventDay,
-            extremeEventClose = extremeEventClose,
-            reclaimEnough = reclaimEnough,
-            fromPrevEvent = prevWasEvent,
-            tradeFromRule = tradeFromRule
-        },
+        event_day_type = isFrdEvent and -1 or (isFgdEvent and 1 or 0),
+        repeated_pump_score = prevIsPump and 1 or 0, repeated_dump_score = prevIsDump and 1 or 0, consolidation_score = rect.valid and 1 or 0, three_levels_score = 0,
+
         failReasons = {
-            noPrevPump = not prevIsPump,
-            noPrevDump = not prevIsDump,
-            noEventUp = not eventUp,
-            noEventDown = not eventDown,
-            noPrevRange = not prevRangePass,
-            noPrevClv = not prevClvPass,
-            noEventRange = not eventRangePass,
-            noEventClv = not eventClvPass,
-            noReclaim = not reclaimPass
+            prevRangeFail = not prevRangePass,
+            prevClvFail = (prevClose > prevOpen and not prevClvHighPass) or (prevClose < prevOpen and not prevClvLowPass),
+            prevBodyFail = not prevBodyRatioPass,
+            eventRangeFail = not eventRangePass,
+            eventClvFail = (eventUp and not eventClvHighPass) or (eventDown and not eventClvLowPass),
+            reclaimFail = (basicFrd and not reclaimPassFrd) or (basicFgd and not reclaimPassFgd)
         }
     }
 
-    local dateKey = day_key(S.d1:date(day_idx))
+    local dateKey = rec.dateKey
     if dateKey ~= nil then
         S.dayMarks[dateKey] = {
             dateKey = rec.dateKey,
-            sourceDate = rec.sourceDate,
             prevDateKey = rec.prevDateKey,
             nextDateKey = rec.nextDateKey,
-            prevOpen = rec.prevOpen,
-            prevHigh = rec.prevHigh,
-            prevLow = rec.prevLow,
-            prevClose = rec.prevClose,
-            prevRange = rec.prevRange,
-            prevAtr = rec.prevAtr,
-            prevClv = rec.prevClv,
-            eventOpen = rec.eventOpen,
-            eventHigh = rec.eventHigh,
-            eventLow = rec.eventLow,
-            eventClose = rec.eventClose,
-            eventRange = rec.eventRange,
-            eventAtr = rec.eventAtr,
-            eventClv = rec.eventClv,
-            prevIsPump = rec.prevIsPump,
-            prevIsDump = rec.prevIsDump,
-            prevBullBody = rec.prevBullBody,
-            prevBearBody = rec.prevBearBody,
-            prevRangePass = rec.prevRangePass,
-            prevClvHighPass = rec.prevClvHighPass,
-            prevClvLowPass = rec.prevClvLowPass,
-            eventUp = rec.eventUp,
-            eventDown = rec.eventDown,
-            eventRangePass = rec.eventRangePass,
-            eventClvHighPass = rec.eventClvHighPass,
-            eventClvLowPass = rec.eventClvLowPass,
-            reclaimPassFgd = rec.reclaimPassFgd,
-            reclaimPassFrd = rec.reclaimPassFrd,
-            basicFgd = rec.basicFgd,
-            basicFrd = rec.basicFrd,
-            isFrdEvent = rec.isFrd,
-            isFgdEvent = rec.isFgd,
+            prevOpen = rec.prevOpen, prevHigh = rec.prevHigh, prevLow = rec.prevLow, prevClose = rec.prevClose,
+            prevRange = rec.prevRange, prevAtr = rec.prevAtr, prevClv = rec.prevClv, prevBodyRatio = rec.prevBodyRatio,
+            eventOpen = rec.eventOpen, eventHigh = rec.eventHigh, eventLow = rec.eventLow, eventClose = rec.eventClose,
+            eventRange = rec.eventRange, eventAtr = rec.eventAtr, eventClv = rec.eventClv,
+            prevIsPump = rec.prevIsPump, prevIsDump = rec.prevIsDump,
+            basicFrd = rec.basicFrd, basicFgd = rec.basicFgd,
+            qualifiedFrd = rec.qualifiedFrd, qualifiedFgd = rec.qualifiedFgd,
             isTradeDay = rec.isTradeDay,
-            reclaimRatio = rec.reclaimRatio,
-            qualityScore = rec.qualityScore,
-            qualityGrade = rec.qualityGrade,
-            isHighQualityFrd = rec.isHighQualityFrd,
-            isHighQualityFgd = rec.isHighQualityFgd,
-            tradeFromRule = rec.tradeFromRule,
+            reclaimRatioFrd = rec.reclaimRatioFrd, reclaimRatioFgd = rec.reclaimRatioFgd,
+            qualityScoreFrd = rec.qualityScoreFrd, qualityScoreFgd = rec.qualityScoreFgd,
+            qualityGradeFrd = rec.qualityGradeFrd, qualityGradeFgd = rec.qualityGradeFgd,
+            nearMissFrd = rec.nearMissFrd, nearMissFgd = rec.nearMissFgd,
             failReasons = rec.failReasons
         }
 
-        if instance.parameters.debug and (
-            rec.dateLabel == "2025-02-20" or
-            rec.dateLabel == "2025-02-28" or
-            rec.dateLabel == "2025-03-04" or
-            rec.dateLabel == "2025-03-06"
-        ) then
-            debug_output(string.format(
-                "%s Prev(P=%s D=%s) Event(U=%s D=%s) FRD=%s FGD=%s Trade=%s From=%s Q=%d(%s)",
-                rec.dateLabel,
-                tostring(rec.prevIsPump), tostring(rec.prevIsDump),
-                tostring(rec.eventUp), tostring(rec.eventDown),
-                tostring(rec.isFrd), tostring(rec.isFgd),
-                tostring(rec.isTradeDay), tostring(rec.tradeFromRule),
-                tonumber(rec.qualityScore) or 0, rec.qualityGrade or ""
-            ))
+        if instance.parameters.debug and (rec.nearMissFrd or rec.nearMissFgd) then
+            debug_output(string.format("%s near-miss FRD=%s FGD=%s fail(eventRange=%s,eventClv=%s,reclaim=%s)",
+                rec.dateLabel, tostring(rec.nearMissFrd), tostring(rec.nearMissFgd),
+                tostring(rec.failReasons.eventRangeFail), tostring(rec.failReasons.eventClvFail), tostring(rec.failReasons.reclaimFail)))
         end
     end
 
     S.day_cache[day_idx] = rec
     return rec
 end
+
 
 function Prepare(nameOnly)
     S.source = instance.source
