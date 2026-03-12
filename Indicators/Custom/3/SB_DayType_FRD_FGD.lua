@@ -1,4 +1,11 @@
-local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, draw={initialized=false, weekdayFont=nil, dayTypeFont=nil, debugFont=nil, neutralPen=nil, rectHighPen=nil, rectLowPen=nil}}
+local FONT_WEEKDAY = 10
+local FONT_DAYTYPE = 11
+local FONT_DEBUG = 12
+local PEN_NEUTRAL = 20
+local PEN_RECT_HIGH = 21
+local PEN_RECT_LOW = 22
+
+local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW}}
 local T = {}
 
 function Init()
@@ -97,10 +104,21 @@ local function get_day_type_color(label)
     return instance.parameters.InactiveTextColor
 end
 
-local function draw_text(context, font, text, color, x, y)
-    if context == nil or font == nil or text == nil or text == "" then return end
-    if safe_method(context, "drawText", font, text, color, -1, x, y, 0) ~= nil then return end
-    safe_method(context, "drawText", font, text, color, x, y)
+local function draw_text(context, fontId, text, color, x, y)
+    if context == nil or fontId == nil or text == nil or text == "" or x == nil or y == nil then return end
+
+    local measured = safe_method(context, "measureText", fontId, text, 0)
+    local w, h = nil, nil
+    if type(measured) == "table" then
+        w = measured.width or measured.w or measured[1]
+        h = measured.height or measured.h or measured[2]
+    elseif measured ~= nil then
+        w = tonumber(measured)
+    end
+
+    w = math.max(1, tonumber(w) or 1)
+    h = math.max(1, tonumber(h) or 1)
+    safe_method(context, "drawText", fontId, text, color, -1, x, y, x + w, y + h, 0)
 end
 
 local function get_x_for_time(context, ts)
@@ -119,10 +137,9 @@ local function get_y_for_price(context, price)
     return nil
 end
 
-local function draw_line(context, pen, x1, y1, x2, y2)
-    if context == nil or pen == nil or x1 == nil or y1 == nil or x2 == nil or y2 == nil then return end
-    if safe_method(context, "drawLine", pen, x1, y1, x2, y2) ~= nil then return end
-    safe_method(context, "drawLine", x1, y1, x2, y2, pen)
+local function draw_line(context, penId, x1, y1, x2, y2)
+    if context == nil or penId == nil or x1 == nil or y1 == nil or x2 == nil or y2 == nil then return end
+    safe_method(context, "drawLine", penId, x1, y1, x2, y2)
 end
 
 local function ensure_draw_resources(context)
@@ -130,12 +147,19 @@ local function ensure_draw_resources(context)
     local weekdaySize = clamp_positive(instance.parameters.WeekdayFontSize, 10)
     local dayTypeSize = clamp_positive(instance.parameters.DayTypeFontSize, 10)
     local debugSize = math.max(8, clamp_positive(instance.parameters.DayTypeFontSize, 10) - 1)
-    S.draw.weekdayFont = safe_method(context, "createFont", "Arial", weekdaySize, false, false)
-    S.draw.dayTypeFont = safe_method(context, "createFont", "Arial", dayTypeSize, true, false)
-    S.draw.debugFont = safe_method(context, "createFont", "Arial", debugSize, false, false)
-    S.draw.neutralPen = safe_method(context, "createPen", 1, instance.parameters.InactiveTextColor)
-    S.draw.rectHighPen = safe_method(context, "createPen", 1, instance.parameters.RectangleHighDebugColor)
-    S.draw.rectLowPen = safe_method(context, "createPen", 1, instance.parameters.RectangleLowDebugColor)
+    local weekdayPx = safe_method(context, "pointsToPixels", weekdaySize) or weekdaySize
+    local dayTypePx = safe_method(context, "pointsToPixels", dayTypeSize) or dayTypeSize
+    local debugPx = safe_method(context, "pointsToPixels", debugSize) or debugSize
+    local penWidth = safe_method(context, "pointsToPixels", 1) or 1
+    local solidStyle = safe_method(context, "convertPenStyle", core.LINE_SOLID) or core.LINE_SOLID
+
+    safe_method(context, "createFont", FONT_WEEKDAY, "Arial", weekdayPx, weekdayPx, 0)
+    safe_method(context, "createFont", FONT_DAYTYPE, "Arial", dayTypePx, dayTypePx, core.FONT_BOLD or 0)
+    safe_method(context, "createFont", FONT_DEBUG, "Arial", debugPx, debugPx, 0)
+
+    safe_method(context, "createPen", PEN_NEUTRAL, solidStyle, penWidth, instance.parameters.InactiveTextColor)
+    safe_method(context, "createPen", PEN_RECT_HIGH, solidStyle, penWidth, instance.parameters.RectangleHighDebugColor)
+    safe_method(context, "createPen", PEN_RECT_LOW, solidStyle, penWidth, instance.parameters.RectangleLowDebugColor)
     S.draw.initialized = true
 end
 
