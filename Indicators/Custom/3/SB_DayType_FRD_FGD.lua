@@ -17,6 +17,7 @@ local state = {
     hudSummaryStream = nil,
     hudBlockedStream = nil,
     d1IndexByDateKey = {},
+    dayMarks = {},
     lastDailyIndex = nil,
     hudDrawer = nil,
     hudCanDraw = nil,
@@ -107,6 +108,81 @@ end
 
 local function dateKey(v)
     return math.floor(v)
+end
+
+local function drawTextCompat(context, x, y, text, color)
+    if context == nil then
+        return false
+    end
+
+    local ok = pcall(function()
+        context:drawText(x, y, text, color)
+    end)
+    if ok then
+        return true
+    end
+
+    ok = pcall(function()
+        context:drawText(x, y, text)
+    end)
+    if ok then
+        return true
+    end
+
+    ok = pcall(function()
+        context:drawText(text, x, y, color)
+    end)
+    if ok then
+        return true
+    end
+
+    ok = pcall(function()
+        context:drawText(text, x, y)
+    end)
+
+    return ok
+end
+
+local function getVisibleRange(context)
+    local firstVisible = nil
+    local lastVisible = nil
+
+    if context ~= nil then
+        local okFirst, valueFirst = pcall(function() return context:firstBar() end)
+        if okFirst then
+            firstVisible = valueFirst
+        end
+
+        local okLast, valueLast = pcall(function() return context:lastBar() end)
+        if okLast then
+            lastVisible = valueLast
+        end
+
+        if firstVisible == nil then
+            local okFirstVisible, valueFirstVisible = pcall(function() return context:firstVisibleBar() end)
+            if okFirstVisible then
+                firstVisible = valueFirstVisible
+            end
+        end
+
+        if lastVisible == nil then
+            local okLastVisible, valueLastVisible = pcall(function() return context:lastVisibleBar() end)
+            if okLastVisible then
+                lastVisible = valueLastVisible
+            end
+        end
+    end
+
+    if state.source ~= nil then
+        if firstVisible == nil then
+            firstVisible = state.source:first()
+        end
+        if lastVisible == nil then
+            lastVisible = state.source:size() - 1
+        end
+    end
+
+    return firstVisible, lastVisible
 end
 
 local function calcATR(d1, dailyIndex, len)
@@ -264,6 +340,15 @@ function Prepare(nameOnly)
         return
     end
 
+    local ownerDrawnOk = pcall(function()
+        instance:ownerDrawn(true)
+    end)
+    if ownerDrawnOk then
+        trace("ownerDrawn enabled")
+    else
+        trace("ownerDrawn enable failed")
+    end
+
     local name = profile:id() .. "(" .. state.source:name() .. ")"
     instance:name(name)
 
@@ -369,16 +454,39 @@ function Update(period, mode)
         return
     end
 
+    local currentDateKey = dateKey(state.source:date(period))
     local dailyIndex = findDailyIndexByTime(state.source:date(period))
     if dailyIndex == nil then
+        trace("dailyIndex not found")
+        state.dayMarks[currentDateKey] = "NONE"
+        trace("dayMarks[" .. tostring(currentDateKey) .. "] written")
+        trace("mark = NONE")
         return
     end
+    trace("dailyIndex found: " .. tostring(dailyIndex))
 
     local result = evaluateDayType(state.d1, dailyIndex, state.dayatrlen, state.dumppumpatrm)
     if result == nil then
+        trace("result not found")
+        state.dayMarks[currentDateKey] = "NONE"
+        trace("dayMarks[" .. tostring(currentDateKey) .. "] written")
+        trace("mark = NONE")
         trace("core calculation finish")
         return
     end
+    trace("result found")
+
+    local dayMark = "NONE"
+    if result.yFrd then
+        dayMark = "FRD"
+    elseif result.yFgd then
+        dayMark = "FGD"
+    elseif result.tradeDayToday then
+        dayMark = "TD"
+    end
+    state.dayMarks[currentDateKey] = dayMark
+    trace("dayMarks[" .. tostring(currentDateKey) .. "] written")
+    trace("mark = " .. dayMark)
 
     trace("core calculation finish")
 
@@ -451,6 +559,75 @@ function Update(period, mode)
     trace("stream write finish")
 end
 
+function Draw(stage, context)
+    trace("Draw called stage=" .. tostring(stage))
+
+    if stage ~= 2 then
+        return
+    end
+
+    trace("Draw stage 2 entered")
+
+    local firstVisible, lastVisible = getVisibleRange(context)
+    trace("visible first bar = " .. tostring(firstVisible))
+    trace("visible last bar = " .. tostring(lastVisible))
+
+    local y = 8
+    local drewHud = drawTextCompat(context, 8, y, "TEST HUD", core.rgb(255, 255, 0))
+    if not drewHud then
+        trace("TEST HUD draw failed")
+    end
+
+    if state.source == nil or firstVisible == nil or lastVisible == nil then
+        return
+    end
+
+    if firstVisible < state.source:first() then
+        firstVisible = state.source:first()
+    end
+
+    local sourceLast = state.source:size() - 1
+    if lastVisible > sourceLast then
+        lastVisible = sourceLast
+    end
+
+    local uniqueDates = {}
+    local orderedDates = {}
+    local i = firstVisible
+    while i <= lastVisible do
+        local key = dateKey(state.source:date(i))
+        if uniqueDates[key] == nil then
+            uniqueDates[key] = true
+            table.insert(orderedDates, key)
+        end
+        i = i + 1
+    end
+
+    local foundEvent = false
+    local maxRows = 14
+    local row = 1
+    local j = 1
+    while j <= #orderedDates and row <= maxRows do
+        local key = orderedDates[j]
+        local mark = state.dayMarks[key]
+        if mark == nil then
+            mark = "NO MARK"
+        end
+
+        if mark == "FRD" or mark == "FGD" or mark == "TD" then
+            foundEvent = true
+        end
+
+        drawTextCompat(context, 8, y + row * 16, tostring(key) .. " " .. mark, core.rgb(220, 220, 220))
+        row = row + 1
+        j = j + 1
+    end
+
+    if not foundEvent then
+        drawTextCompat(context, 8, y + row * 16, "CURRENT VIEW: NO FRD/FGD/TD FOUND", core.rgb(255, 99, 71))
+    end
+end
+
 function ReleaseInstance()
     deleteHudLabel(state.hudPrefix .. "DAYTYPE")
     deleteHudLabel(state.hudPrefix .. "TRADEDAY")
@@ -458,6 +635,7 @@ function ReleaseInstance()
 
     state.d1 = nil
     state.d1IndexByDateKey = {}
+    state.dayMarks = {}
     state.lastDailyIndex = nil
 end
 
