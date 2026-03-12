@@ -378,6 +378,7 @@ function Prepare(nameOnly)
     T.fgdEvent = instance:addStream("is_fgd_event_day", core.Line, "FGD Event", "", core.rgb(0,180,0), S.first)
     T.frdTrade = instance:addStream("is_frd_trade_day_candidate", core.Line, "FRD Trade Candidate", "", core.rgb(255,140,0), S.first)
     T.fgdTrade = instance:addStream("is_fgd_trade_day_candidate", core.Line, "FGD Trade Candidate", "", core.rgb(255,200,0), S.first)
+    T.tradeDay = instance:addStream("is_trade_day", core.Line, "Trade Day", "", core.rgb(255,215,0), S.first)
 
     T.rectValid = instance:addStream("has_valid_rectangle", core.Line, "Rectangle Valid", "", core.rgb(135,206,250), S.first)
     T.rectHigh = instance:addStream("rectangle_high", core.Line, "Rectangle High", "", core.rgb(255,255,255), S.first)
@@ -388,7 +389,9 @@ function Prepare(nameOnly)
     T.rectEnd = instance:addStream("rectangle_end_time", core.Line, "Rectangle End Time", "", core.rgb(72,61,139), S.first)
 
     T.daytypeBias = instance:addStream("daytype_bias", core.Line, "DayType Bias", "", core.rgb(255,215,0), S.first)
+    T.dayBias = instance:addStream("day_bias", core.Line, "Day Bias", "", core.rgb(255,255,153), S.first)
     T.eventDayType = instance:addStream("event_day_type", core.Line, "Event Day Type", "", core.rgb(238,130,238), S.first)
+    T.dayTypeCode = instance:addStream("day_type_code", core.Line, "Day Type Code", "", core.rgb(199,21,133), S.first)
 
     T.repeatedPumpScore = instance:addStream("repeated_pump_score", core.Line, "Repeated Pump Score", "", core.rgb(60,179,113), S.first)
     T.repeatedDumpScore = instance:addStream("repeated_dump_score", core.Line, "Repeated Dump Score", "", core.rgb(205,92,92), S.first)
@@ -472,6 +475,7 @@ function Update(period, mode)
     T.fgdEvent[period] = d.is_fgd_event_day and 1 or 0
     T.frdTrade[period] = d.is_frd_trade_day_candidate and 1 or 0
     T.fgdTrade[period] = d.is_fgd_trade_day_candidate and 1 or 0
+    T.tradeDay[period] = (d.is_frd_trade_day_candidate or d.is_fgd_trade_day_candidate) and 1 or 0
 
     T.rectValid[period] = d.has_valid_rectangle and 1 or 0
     T.rectHigh[period] = d.rectangle_high or 0
@@ -482,7 +486,9 @@ function Update(period, mode)
     T.rectEnd[period] = d.rectangle_end_time or 0
 
     T.daytypeBias[period] = d.daytype_bias or 0
+    T.dayBias[period] = d.daytype_bias or 0
     T.eventDayType[period] = d.event_day_type or 0
+    T.dayTypeCode[period] = (d.is_frd_event_day and -1) or (d.is_fgd_event_day and 1) or ((d.is_frd_trade_day_candidate and -2) or (d.is_fgd_trade_day_candidate and 2) or 0)
 
     T.repeatedPumpScore[period] = d.repeated_pump_score or 0
     T.repeatedDumpScore[period] = d.repeated_dump_score or 0

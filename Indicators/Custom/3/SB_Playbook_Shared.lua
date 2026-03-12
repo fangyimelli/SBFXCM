@@ -169,15 +169,33 @@ function M.build_daytype_record(d1, m15, day_idx, params, day_cache)
 
     local prevBase = M.evaluate_daytype(d1, day_idx - 1)
     local todayOpen, todayClose = d1.open[day_idx], d1.close[day_idx]
-    local isFrdEvent = prevBase ~= nil and prevBase.is_pump_day and todayClose < todayOpen and rect.valid
-    local isFgdEvent = prevBase ~= nil and prevBase.is_dump_day and todayClose > todayOpen and rect.valid
+    -- Phase-1 SSOT: rectangle stays debug/output only, not a hard event gate.
+    local isFrdEvent = prevBase ~= nil and prevBase.is_pump_day and todayClose < todayOpen
+    local isFgdEvent = prevBase ~= nil and prevBase.is_dump_day and todayClose > todayOpen
 
     local prev = cache[day_idx - 1]
     if prev == nil and day_idx - 1 >= d1:first() then
         prev = M.build_daytype_record(d1, m15, day_idx - 1, p, cache)
     end
-    local isFrdTradeCandidate = prev ~= nil and prev.is_frd_event_day and prev.has_valid_rectangle
-    local isFgdTradeCandidate = prev ~= nil and prev.is_fgd_event_day and prev.has_valid_rectangle
+    local isFrdTradeCandidate = prev ~= nil and prev.is_frd_event_day
+    local isFgdTradeCandidate = prev ~= nil and prev.is_fgd_event_day
+    local isTradeDay = isFrdTradeCandidate or isFgdTradeCandidate
+
+    local eventType = "none"
+    local dayTypeCode = 0
+    if isFrdEvent then
+        eventType = "FRD"
+        dayTypeCode = -1
+    elseif isFgdEvent then
+        eventType = "FGD"
+        dayTypeCode = 1
+    elseif isFrdTradeCandidate then
+        eventType = "FRD_TRADE_DAY"
+        dayTypeCode = -2
+    elseif isFgdTradeCandidate then
+        eventType = "FGD_TRADE_DAY"
+        dayTypeCode = 2
+    end
 
     local atr = M.calc_atr(d1, day_idx, p.dayatrlen or 14) or 999
     local consolidationScore = rect.valid and ((rect.contained >= 7 and rect.height <= atr) and 2 or 1) or 0
@@ -195,7 +213,9 @@ function M.build_daytype_record(d1, m15, day_idx, params, day_cache)
         is_fgd_event_day = isFgdEvent,
         is_frd_trade_day_candidate = isFrdTradeCandidate,
         is_fgd_trade_day_candidate = isFgdTradeCandidate,
+        is_trade_day = isTradeDay,
         has_valid_rectangle = rect.valid,
+        rectangle_valid = rect.valid,
         rectangle_high = rect.high,
         rectangle_low = rect.low,
         rectangle_height = rect.height,
@@ -203,6 +223,11 @@ function M.build_daytype_record(d1, m15, day_idx, params, day_cache)
         rectangle_start_time = rect.start_time,
         rectangle_end_time = rect.end_time,
         bias = base.bias,
+        day_bias = base.bias,
+        daytype_bias = base.bias,
+        event_type = eventType,
+        day_type_code = dayTypeCode,
+        event_day_type = (isFrdEvent and -1) or (isFgdEvent and 1) or 0,
         repeated_pump_score = base.is_pump_day and 1 or 0,
         repeated_dump_score = base.is_dump_day and 1 or 0,
         consolidation_score = consolidationScore,
@@ -213,6 +238,69 @@ function M.build_daytype_record(d1, m15, day_idx, params, day_cache)
 
     cache[day_idx] = rec
     return rec
+end
+
+local function pivotHigh(stream, p, l, r)
+    if stream == nil or p == nil then return nil end
+    if p < stream:first() + l or p + r > stream:size() - 1 then return nil end
+    local v = stream.high[p]
+    for i = p - l, p + r do
+        if i ~= p and stream.high[i] >= v then return nil end
+    end
+    return v
+end
+
+local function pivotLow(stream, p, l, r)
+    if stream == nil or p == nil then return nil end
+    if p < stream:first() + l or p + r > stream:size() - 1 then return nil end
+    local v = stream.low[p]
+    for i = p - l, p + r do
+        if i ~= p and stream.low[i] <= v then return nil end
+    end
+    return v
+end
+
+function M.update_structure_state(runtime, source, m15, period, params)
+    if runtime == nil or source == nil or m15 == nil or period == nil then return nil end
+    local p = params or {}
+    local bosLeft = p.bosleft or 2
+    local bosRight = p.bosright or 2
+
+    local ts = source:date(period)
+    local k = M.day_key(ts)
+    if runtime.day_key == nil or runtime.day_key ~= k then
+        runtime.day_key = k
+        runtime.asia_high = nil
+        runtime.asia_low = nil
+    end
+
+    if M.is_in_asia_window(ts) then
+        local h, l = source.high[period], source.low[period]
+        if runtime.asia_high == nil or h > runtime.asia_high then runtime.asia_high = h end
+        if runtime.asia_low == nil or l < runtime.asia_low then runtime.asia_low = l end
+    end
+
+    local hasAsia = runtime.asia_high ~= nil and runtime.asia_low ~= nil
+    local sweepUp = hasAsia and source.high[period] > runtime.asia_high and source.close[period] < runtime.asia_high
+    local sweepDown = hasAsia and source.low[period] < runtime.asia_low and source.close[period] > runtime.asia_low
+
+    local idx15 = M.find_history_index_by_time(m15, ts)
+    local hasBos = false
+    if idx15 ~= nil then
+        local pivotPos = idx15 - 2
+        local ph = pivotHigh(m15, pivotPos, bosLeft, bosRight)
+        local pl = pivotLow(m15, pivotPos, bosLeft, bosRight)
+        if ph ~= nil and m15.close[idx15] > ph then hasBos = true end
+        if pl ~= nil and m15.close[idx15] < pl then hasBos = true end
+    end
+
+    return {
+        has_asia_range = hasAsia,
+        sweep_up = sweepUp,
+        sweep_down = sweepDown,
+        has_session_sweep = sweepUp or sweepDown,
+        has_bos = hasBos
+    }
 end
 
 return M
