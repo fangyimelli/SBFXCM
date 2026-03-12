@@ -15,6 +15,8 @@ local T = {}
 local H = {}
 local I = {}
 
+local HUD_STRING_STYLE = core.String ~= nil and core.String or core.Line
+
 local function trace(msg)
     if S.debugmode or S.debug then
         pcall(function()
@@ -187,6 +189,72 @@ local function safeAddStream(id, style, label, color, first)
     end
 
     return stream
+end
+
+local function writeHudStream(stream, period, textValue, numericFallback)
+    if stream == nil then
+        return
+    end
+
+    local ok = pcall(function()
+        stream[period] = textValue
+    end)
+
+    if not ok then
+        stream[period] = numericFallback
+    end
+end
+
+local function normalizeBlockedReason(reason)
+    local key = string.lower(tostring(reason or ""))
+    if key == "" then
+        return ""
+    end
+
+    if string.find(key, "not trade day", 1, true) ~= nil then
+        return "NOT TRADE DAY"
+    end
+    if string.find(key, "bias none", 1, true) ~= nil then
+        return "BIAS NONE"
+    end
+    if string.find(key, "min score", 1, true) ~= nil or string.find(key, "score low", 1, true) ~= nil then
+        return "SCORE BELOW MIN"
+    end
+    if string.find(key, "daily limit", 1, true) ~= nil then
+        return "DAILY LIMIT REACHED"
+    end
+
+    return string.upper(tostring(reason or ""))
+end
+
+local function formatPrice(v)
+    if v == nil then
+        return "-"
+    end
+    return tostring(v)
+end
+
+local function formatFocusDayText()
+    if not T.focusmode then
+        return "FOCUS MODE: OFF"
+    end
+
+    local raw = tostring(T.focusinput or "")
+    if string.match(raw, "^%d%d%d%d%-%d%d%-%d%d$") ~= nil then
+        return "FOCUS MODE: ON | FOCUS DAY: " .. raw
+    end
+
+    if T.focusDayKey ~= nil and core.dateToTable ~= nil then
+        local ok, dt = pcall(function()
+            return core.dateToTable(T.focusDayKey)
+        end)
+        if ok and dt ~= nil and dt.year ~= nil and dt.month ~= nil and dt.day ~= nil then
+            local iso = string.format("%04d-%02d-%02d", dt.year, dt.month, dt.day)
+            return "FOCUS MODE: ON | FOCUS DAY: " .. iso
+        end
+    end
+
+    return "FOCUS MODE: ON | FOCUS DAY: " .. tostring(T.focusDayKey or "-")
 end
 
 local function fScore(inNy, hasSweep, hasBos, hasFvgMit, hasEntryPath)
@@ -396,6 +464,19 @@ local function writeManagerStreams(period)
             T.streams.blockedstream[period] = 0
         end
     end
+
+    local displayText = "DISPLAY OK: " .. (S.displayOk and "YES" or "NO")
+    local tradeText = "TODAY TRADES: " .. tostring(S.todayTradeCount or 0) .. "/" .. tostring(T.dailymax or 0)
+    local scoreText = "SCORE A: " .. tostring(S.scoreA or 0) .. " | SCORE A+: " .. tostring(S.scoreAPlus or 0)
+    local targetsText = "ENTRY: " .. formatPrice(S.entry) .. " | TP: " .. formatPrice(S.tp) .. " | SL: " .. formatPrice(S.sl)
+    local blockedText = normalizeBlockedReason(S.blockedReason)
+    local focusText = formatFocusDayText()
+
+    writeHudStream(T.streams.hud_trade, period, displayText .. " | " .. tradeText, S.displayOk and 1 or 0)
+    writeHudStream(T.streams.hud_score, period, scoreText, S.scoreA or 0)
+    writeHudStream(T.streams.hud_targets, period, targetsText, S.entry or 0)
+    writeHudStream(T.streams.hud_blocked, period, blockedText ~= "" and ("BLOCKED: " .. blockedText) or "BLOCKED: NONE", blockedText ~= "" and 1 or 0)
+    writeHudStream(T.streams.hud_focus, period, focusText, T.focusmode and 1 or 0)
 end
 
 function Prepare(nameOnly)
@@ -453,6 +534,11 @@ function Prepare(nameOnly)
     T.streams.focusstream = safeAddStream("focusstream", core.Line, "Focus", core.rgb(255, 140, 0), S.first)
     T.streams.hudstate = safeAddStream("hudstate", core.Line, "HUDState", core.rgb(128, 128, 128), S.first)
     T.streams.blockedstream = safeAddStream("blockedstream", core.Line, "Blocked", core.rgb(255, 99, 71), S.first)
+    T.streams.hud_trade = safeAddStream("hud_trade", HUD_STRING_STYLE, "HUD Trade", core.rgb(240, 240, 240), S.first)
+    T.streams.hud_score = safeAddStream("hud_score", HUD_STRING_STYLE, "HUD Score", core.rgb(255, 215, 0), S.first)
+    T.streams.hud_targets = safeAddStream("hud_targets", HUD_STRING_STYLE, "HUD Targets", core.rgb(135, 206, 250), S.first)
+    T.streams.hud_blocked = safeAddStream("hud_blocked", HUD_STRING_STYLE, "HUD Blocked", core.rgb(255, 99, 71), S.first)
+    T.streams.hud_focus = safeAddStream("hud_focus", HUD_STRING_STYLE, "HUD Focus", core.rgb(255, 140, 0), S.first)
 
     H.m5 = safeGetHistory(S.source:instrument(), "m5", S.source:isBid())
     H.m15 = safeGetHistory(S.source:instrument(), "m15", S.source:isBid())
