@@ -1,18 +1,22 @@
 local okShared, shared = pcall(dofile, "Indicators/Custom/3/SB_Playbook_Shared.lua")
 if not okShared then shared = nil end
 
-local S={source=nil,first=nil,m5=nil,m15=nil,d1=nil,ema=nil,last_day=nil,day_cache={},frd_triggered=false,fgd_triggered=false,frd_entry_idx=nil,fgd_entry_idx=nil}
+local S={source=nil,first=nil,m15=nil,d1=nil,ema=nil,day_cache={},structure_runtime={day_key=nil,asia_high=nil,asia_low=nil},frd_entry_idx=nil,fgd_entry_idx=nil}
 local T={}
 
 function Init()
     indicator:name("SB Entry Qualifier")
-    indicator:description("FRD/FGD EMA20 close-back-inside entry qualifiers on 5m close")
+    indicator:description("Entry-only qualifier: FRD/FGD trade-day EMA20 close-back-inside")
     indicator:requiredSource(core.Bar)
     indicator:type(core.Indicator)
     indicator.parameters:addInteger("followthrough_bars", "Follow Through Bars", "", 3)
 end
 
-local function getHistory(i,tf,b) local ok,h=pcall(function() return core.host:execute("getSyncHistory",i,tf,b,0,0) end); if ok then return h end return nil end
+local function getHistory(i,tf,b)
+    local ok,h=pcall(function() return core.host:execute("getSyncHistory",i,tf,b,0,0) end)
+    if ok then return h end
+    return nil
+end
 
 local function is5m(source)
     local ok, tf = pcall(function() return source:barSize() end)
@@ -20,7 +24,7 @@ local function is5m(source)
 end
 
 local function dayrecord(idx)
-    if shared==nil or S.d1==nil or idx==nil then return nil end
+    if shared==nil or S.d1==nil or S.m15==nil or idx==nil then return nil end
     return shared.build_daytype_record(S.d1, S.m15, idx, {
         rectangle_lookback_bars=8,
         rectangle_min_contained_closes=6,
@@ -30,12 +34,21 @@ local function dayrecord(idx)
 end
 
 function Prepare(nameOnly)
-    S.source=instance.source; S.first=S.source:first(); instance:name(profile:id().."("..S.source:name()..")"); if nameOnly then return end
-    S.m5=getHistory(S.source:instrument(),"m5",S.source:isBid())
+    S.source=instance.source
+    S.first=S.source:first()
+    instance:name(profile:id().."("..S.source:name()..")")
+    if nameOnly then return end
+
     S.d1=getHistory(S.source:instrument(),"D1",S.source:isBid())
     S.m15=getHistory(S.source:instrument(),"m15",S.source:isBid())
     local ok,ema=pcall(function() return core.indicators:create("EMA", S.source.close, 20) end)
     if ok then S.ema=ema end
+
+    T.consume_trade_day=instance:addStream("entry_consumed_trade_day",core.Line,"Consumed Trade Day","",core.rgb(255,215,0),S.first)
+    T.consume_bias=instance:addStream("entry_consumed_day_bias",core.Line,"Consumed Day Bias","",core.rgb(173,216,230),S.first)
+    T.consume_rect_valid=instance:addStream("entry_consumed_rectangle_valid",core.Line,"Consumed Rectangle Valid","",core.rgb(135,206,250),S.first)
+    T.consume_has_bos=instance:addStream("entry_consumed_structure_has_bos",core.Line,"Consumed Structure BOS","",core.rgb(199,21,133),S.first)
+    T.consume_session_sweep=instance:addStream("entry_consumed_structure_session_sweep",core.Line,"Consumed Structure Sweep","",core.rgb(255,140,0),S.first)
 
     T.frd_ready=instance:addStream("frd_entry_ready",core.Line,"FRD Entry Ready","",core.rgb(255,165,0),S.first)
     T.frd_trigger=instance:addStream("frd_entry_triggered",core.Line,"FRD Triggered","",core.rgb(220,20,60),S.first)
@@ -48,12 +61,14 @@ function Prepare(nameOnly)
 end
 
 function Update(period, mode)
-    if shared==nil or S.source==nil or period<S.first then return end
+    if shared==nil or S.source==nil or S.d1==nil or S.m15==nil or period<S.first then return end
     if S.ema~=nil then S.ema:update(mode) end
 
     local ts=S.source:date(period)
     local d1idx=shared.find_history_index_by_time(S.d1, ts)
     local d=dayrecord(d1idx)
+    local structure=shared.update_structure_state(S.structure_runtime, S.source, S.m15, period, {bosleft=2, bosright=2})
+
     local ema20=S.ema and S.ema.DATA and S.ema.DATA[period] or nil
     local inWindow=shared.is_in_any_timing_window(ts)
     local on5=is5m(S.source)
@@ -74,15 +89,26 @@ function Update(period, mode)
     if fgdTrig then S.fgd_entry_idx=period end
 
     local follow=0
-    local status=0
     if S.frd_entry_idx~=nil and period>S.frd_entry_idx and period<=S.frd_entry_idx+instance.parameters.followthrough_bars then
         local move=(S.source.close[S.frd_entry_idx]-S.source.close[period])
-        if move>0 then follow=1; if move>(S.source.high[S.frd_entry_idx]-S.source.low[S.frd_entry_idx]) then follow=2 end end
+        if move>0 then
+            follow=1
+            if move>(S.source.high[S.frd_entry_idx]-S.source.low[S.frd_entry_idx]) then follow=2 end
+        end
     elseif S.fgd_entry_idx~=nil and period>S.fgd_entry_idx and period<=S.fgd_entry_idx+instance.parameters.followthrough_bars then
         local move=(S.source.close[period]-S.source.close[S.fgd_entry_idx])
-        if move>0 then follow=1; if move>(S.source.high[S.fgd_entry_idx]-S.source.low[S.fgd_entry_idx]) then follow=2 end end
+        if move>0 then
+            follow=1
+            if move>(S.source.high[S.fgd_entry_idx]-S.source.low[S.fgd_entry_idx]) then follow=2 end
+        end
     end
-    if follow==2 then status=2 elseif follow==1 then status=1 else status=0 end
+    local status = (follow==2 and 2) or (follow==1 and 1) or 0
+
+    T.consume_trade_day[period]=(d and d.is_trade_day) and 1 or 0
+    T.consume_bias[period]=(d and d.day_bias) or 0
+    T.consume_rect_valid[period]=(d and d.rectangle_valid) and 1 or 0
+    T.consume_has_bos[period]=(structure and structure.has_bos) and 1 or 0
+    T.consume_session_sweep[period]=(structure and structure.has_session_sweep) and 1 or 0
 
     T.frd_ready[period]=frdReady and 1 or 0
     T.frd_trigger[period]=frdTrig and 1 or 0
