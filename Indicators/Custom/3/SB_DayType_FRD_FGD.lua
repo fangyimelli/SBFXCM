@@ -1,4 +1,4 @@
-local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, draw={initialized=false, weekdayFont=nil, dayTypeFont=nil, neutralPen=nil}}
+local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, draw={initialized=false, weekdayFont=nil, dayTypeFont=nil, debugFont=nil, neutralPen=nil, rectHighPen=nil, rectLowPen=nil}}
 local T = {}
 
 function Init()
@@ -20,6 +20,8 @@ function Init()
     indicator.parameters:addColor("FGDTextColor", "FGD Text Color", "", core.rgb(0, 180, 0))
     indicator.parameters:addColor("TradeDayTextColor", "Trade Day Text Color", "", core.rgb(255, 200, 0))
     indicator.parameters:addColor("InactiveTextColor", "Inactive Text Color", "", core.rgb(120, 120, 120))
+    indicator.parameters:addColor("RectangleHighDebugColor", "Rectangle High Debug Color", "", core.rgb(255, 255, 255))
+    indicator.parameters:addColor("RectangleLowDebugColor", "Rectangle Low Debug Color", "", core.rgb(135, 206, 250))
     indicator.parameters:addBoolean("debug", "Debug", "", false)
 end
 
@@ -101,13 +103,39 @@ local function draw_text(context, font, text, color, x, y)
     safe_method(context, "drawText", font, text, color, x, y)
 end
 
+local function get_x_for_time(context, ts)
+    if context == nil or ts == nil then return nil end
+    local x = safe_method(context, "positionOfDate", ts)
+    if x ~= nil then return x end
+    return safe_method(context, "positionOfTime", ts)
+end
+
+local function get_y_for_price(context, price)
+    if context == nil or price == nil then return nil end
+    local y = safe_method(context, "positionOfPrice", price)
+    if y ~= nil then return y end
+    local pt = safe_method(context, "pointOfPrice", price)
+    if type(pt) == "table" then return pt.y end
+    return nil
+end
+
+local function draw_line(context, pen, x1, y1, x2, y2)
+    if context == nil or pen == nil or x1 == nil or y1 == nil or x2 == nil or y2 == nil then return end
+    if safe_method(context, "drawLine", pen, x1, y1, x2, y2) ~= nil then return end
+    safe_method(context, "drawLine", x1, y1, x2, y2, pen)
+end
+
 local function ensure_draw_resources(context)
     if S.draw.initialized then return end
     local weekdaySize = clamp_positive(instance.parameters.WeekdayFontSize, 10)
     local dayTypeSize = clamp_positive(instance.parameters.DayTypeFontSize, 10)
+    local debugSize = math.max(8, clamp_positive(instance.parameters.DayTypeFontSize, 10) - 1)
     S.draw.weekdayFont = safe_method(context, "createFont", "Arial", weekdaySize, false, false)
     S.draw.dayTypeFont = safe_method(context, "createFont", "Arial", dayTypeSize, true, false)
+    S.draw.debugFont = safe_method(context, "createFont", "Arial", debugSize, false, false)
     S.draw.neutralPen = safe_method(context, "createPen", 1, instance.parameters.InactiveTextColor)
+    S.draw.rectHighPen = safe_method(context, "createPen", 1, instance.parameters.RectangleHighDebugColor)
+    S.draw.rectLowPen = safe_method(context, "createPen", 1, instance.parameters.RectangleLowDebugColor)
     S.draw.initialized = true
 end
 
@@ -277,8 +305,8 @@ local function build_day_record(day_idx)
         prev_rec = build_day_record(day_idx - 1)
     end
 
-    local is_frd_trade_candidate = prev_rec ~= nil and prev_rec.is_frd_event_day and prev_rec.has_valid_rectangle
-    local is_fgd_trade_candidate = prev_rec ~= nil and prev_rec.is_fgd_event_day and prev_rec.has_valid_rectangle
+    local is_frd_trade_candidate = prev_rec ~= nil and prev_rec.is_frd_event_day
+    local is_fgd_trade_candidate = prev_rec ~= nil and prev_rec.is_fgd_event_day
 
     local event_day_type = 0
     if is_frd_event then
@@ -404,6 +432,23 @@ function Draw(stage, context)
                             local label = labels[i]
                             local y = y1 + weekdayLineHeight + ((i - 1) * dayTypeLineHeight)
                             draw_text(context, S.draw.dayTypeFont, label, get_day_type_color(label), x, y)
+                        end
+                    end
+
+                    if instance.parameters.debug and d.rectangle_high ~= nil and d.rectangle_low ~= nil then
+                        local startX = get_x_for_time(context, d.rectangle_start_time) or x
+                        local endX = get_x_for_time(context, d.rectangle_end_time) or x
+                        local hiY = get_y_for_price(context, d.rectangle_high)
+                        local loY = get_y_for_price(context, d.rectangle_low)
+
+                        if startX ~= nil and endX ~= nil and hiY ~= nil and loY ~= nil then
+                            if startX > endX then startX, endX = endX, startX end
+                            draw_line(context, S.draw.rectHighPen or S.draw.neutralPen, startX, hiY, endX, hiY)
+                            draw_line(context, S.draw.rectLowPen or S.draw.neutralPen, startX, loY, endX, loY)
+                            draw_line(context, S.draw.neutralPen, startX, hiY, startX, loY)
+                            draw_line(context, S.draw.neutralPen, endX, hiY, endX, loY)
+                            draw_text(context, S.draw.debugFont or S.draw.dayTypeFont, "rectangleHigh", instance.parameters.RectangleHighDebugColor, startX, hiY)
+                            draw_text(context, S.draw.debugFont or S.draw.dayTypeFont, "rectangleLow", instance.parameters.RectangleLowDebugColor, startX, loY)
                         end
                     end
                 end
