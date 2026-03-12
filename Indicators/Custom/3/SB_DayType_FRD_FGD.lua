@@ -20,7 +20,7 @@ function Init()
     indicator.parameters:addDouble("atr_mult", "Pump/Dump ATR Mult", "", 1.0)
     indicator.parameters:addInteger("dayatrlen", "Day ATR Length", "", 14)
     indicator.parameters:addBoolean("enablequality", "Enable Quality Filter", "", true)
-    indicator.parameters:addDouble("qualityatrmult", "Quality Prev Day ATR Mult", "", 1.2)
+    indicator.parameters:addDouble("qualityatrmult", "Quality Prev Day ATR Mult", "", 1.3)
     indicator.parameters:addDouble("qualityeventatrmult", "Quality Event Day ATR Mult", "", 0.6)
     indicator.parameters:addDouble("qualitycloseextreme", "Quality Close Extreme Ratio", "", 0.7)
     indicator.parameters:addDouble("qualityreclaimratio", "Quality Reclaim Ratio", "", 0.5)
@@ -122,16 +122,30 @@ end
 
 local function build_audit_lines(dayRecord)
     if dayRecord == nil or dayRecord.audit == nil then return {} end
-    if not instance.parameters.showqualityaudit then return {} end
-    if not (dayRecord.isFgd or dayRecord.is_fgd_event_day or dayRecord.isFrd or dayRecord.is_frd_event_day) then return {} end
+    if not instance.parameters.debug then return {} end
+    if not (dayRecord.audit.isReversalAttempt or dayRecord.isFgd or dayRecord.is_fgd_event_day or dayRecord.isFrd or dayRecord.is_frd_event_day) then return {} end
 
     local audit = dayRecord.audit
     local yn = function(v) return v and "Y" or "N" end
-    return {
+
+    local failed = {}
+    if not audit.strongPrevDay then failed[#failed + 1] = "NoPrevATR" end
+    if not audit.extremePrevClose then failed[#failed + 1] = "NoPrevCLV" end
+    if not audit.strongEventDay then failed[#failed + 1] = "NoEventATR" end
+    if not audit.extremeEventClose then failed[#failed + 1] = "NoEventCLV" end
+    if not audit.reclaimEnough then failed[#failed + 1] = "NoReclaim" end
+
+    local lines = {
         string.format("PrevATR:%s PrevCLV:%s", yn(audit.strongPrevDay), yn(audit.extremePrevClose)),
         string.format("EventATR:%s EventCLV:%s", yn(audit.strongEventDay), yn(audit.extremeEventClose)),
         string.format("Reclaim:%s Q=%d(%s)", yn(audit.reclaimEnough), tonumber(dayRecord.qualityScore) or 0, dayRecord.qualityGrade or "")
     }
+
+    if #failed > 0 and not (dayRecord.isFgd or dayRecord.is_fgd_event_day or dayRecord.isFrd or dayRecord.is_frd_event_day) then
+        lines[#lines + 1] = table.concat(failed, ",")
+    end
+
+    return lines
 end
 
 local function get_day_type_color(label)
@@ -411,7 +425,7 @@ local function build_day_record(day_idx)
     if atrMult <= 0 then atrMult = 1.0 end
 
     local enableQuality = instance.parameters.enablequality
-    local qualityAtrMult = tonumber(instance.parameters.qualityatrmult) or 1.2
+    local qualityAtrMult = tonumber(instance.parameters.qualityatrmult) or 1.3
     local qualityEventAtrMult = tonumber(instance.parameters.qualityeventatrmult) or 0.6
     local qualityCloseExtreme = tonumber(instance.parameters.qualitycloseextreme) or 0.7
     local qualityReclaimRatio = tonumber(instance.parameters.qualityreclaimratio) or 0.5
@@ -428,29 +442,12 @@ local function build_day_record(day_idx)
     local threshold = (yAtr or 0) * atrMult
     local rangePass = yAtr ~= nil and yAtr > 0 and yRange >= threshold
 
-    local prevDayWasDump = rangePass and yClose < yOpen
-    local prevDayWasPump = rangePass and yClose > yOpen
     local todayUp = today_close > today_open
     local todayDown = today_close < today_open
-
-    local is_fgd_event = prevDayWasDump and todayUp
-    local is_frd_event = prevDayWasPump and todayDown
 
     local prev_rec = nil
     if day_idx - 1 >= S.d1:first() then
         prev_rec = build_day_record(day_idx - 1)
-    end
-
-    local from_prev_event = prev_rec ~= nil and (prev_rec.isFrd or prev_rec.isFgd or prev_rec.is_frd_event_day or prev_rec.is_fgd_event_day)
-    local is_trade_day = (not (is_frd_event or is_fgd_event)) and from_prev_event
-    local is_frd_trade_candidate = is_trade_day and prev_rec ~= nil and (prev_rec.isFrd or prev_rec.is_frd_event_day)
-    local is_fgd_trade_candidate = is_trade_day and prev_rec ~= nil and (prev_rec.isFgd or prev_rec.is_fgd_event_day)
-
-    local event_day_type = 0
-    if is_frd_event then
-        event_day_type = -1
-    elseif is_fgd_event then
-        event_day_type = 1
     end
 
     local prevRange = yRange
@@ -469,22 +466,48 @@ local function build_day_record(day_idx)
     local extremeEventClose = false
     local reclaimEnough = false
     local reclaimRatio = 0
+    local prevPumpByQuality = false
+    local prevDumpByQuality = false
+
+    strongPrevDay = prevAtr > 0 and prevRange >= (prevAtr * qualityAtrMult)
+    prevPumpByQuality = (yClose > yOpen) and (prevCloseLocation >= qualityCloseExtreme) and strongPrevDay
+    prevDumpByQuality = (yClose < yOpen) and (prevCloseLocation <= (1 - qualityCloseExtreme)) and strongPrevDay
+    extremePrevClose = prevPumpByQuality or prevDumpByQuality
+
+    local is_fgd_event = prevDumpByQuality and todayUp
+    local is_frd_event = prevPumpByQuality and todayDown
+    local is_reversal_attempt = (prevDumpByQuality and todayUp) or (prevPumpByQuality and todayDown) or (rangePass and ((yClose < yOpen and todayUp) or (yClose > yOpen and todayDown)))
 
     if is_fgd_event or is_frd_event then
-        strongPrevDay = prevAtr > 0 and prevRange >= (prevAtr * qualityAtrMult)
         strongEventDay = eventAtr > 0 and eventRange >= (eventAtr * qualityEventAtrMult)
 
         if is_fgd_event then
-            extremePrevClose = prevCloseLocation <= (1 - qualityCloseExtreme)
             extremeEventClose = eventCloseLocation >= qualityCloseExtreme
             reclaimRatio = (today_close - bodyLow) / bodySize
         else
-            extremePrevClose = prevCloseLocation >= qualityCloseExtreme
             extremeEventClose = eventCloseLocation <= (1 - qualityCloseExtreme)
             reclaimRatio = (bodyHigh - today_close) / bodySize
         end
 
         reclaimEnough = reclaimRatio >= qualityReclaimRatio
+    end
+
+    local basicEventPass = (is_fgd_event or is_frd_event) and strongPrevDay and extremePrevClose and strongEventDay and extremeEventClose and reclaimEnough
+    if not basicEventPass then
+        is_fgd_event = false
+        is_frd_event = false
+    end
+
+    local from_prev_event = prev_rec ~= nil and (prev_rec.isFrd or prev_rec.isFgd or prev_rec.is_frd_event_day or prev_rec.is_fgd_event_day)
+    local is_trade_day = (not (is_frd_event or is_fgd_event)) and from_prev_event
+    local is_frd_trade_candidate = is_trade_day and prev_rec ~= nil and (prev_rec.isFrd or prev_rec.is_frd_event_day)
+    local is_fgd_trade_candidate = is_trade_day and prev_rec ~= nil and (prev_rec.isFgd or prev_rec.is_fgd_event_day)
+
+    local event_day_type = 0
+    if is_frd_event then
+        event_day_type = -1
+    elseif is_fgd_event then
+        event_day_type = 1
     end
 
     local qualityScore = 0
@@ -556,10 +579,11 @@ local function build_day_record(day_idx)
         consolidation_score = consolidation_score,
         three_levels_score = three_levels_score,
         audit = {
-            prevDump = prevDayWasDump,
-            prevPump = prevDayWasPump,
+            prevDump = prevDumpByQuality,
+            prevPump = prevPumpByQuality,
             todayUp = todayUp,
             todayDown = todayDown,
+            isReversalAttempt = is_reversal_attempt,
             prevRange = prevRange,
             prevAtr = prevAtr,
             prevCloseLocation = prevCloseLocation,
