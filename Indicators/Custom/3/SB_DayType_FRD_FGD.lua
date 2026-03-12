@@ -17,7 +17,10 @@ local state = {
     hudSummaryStream = nil,
     hudBlockedStream = nil,
     d1IndexByDateKey = {},
-    lastDailyIndex = nil
+    lastDailyIndex = nil,
+    hudDrawer = nil,
+    hudCanDraw = nil,
+    hudPrefix = "SB_DAYTYPE_HUD_"
 }
 
 local function trace(msg)
@@ -29,6 +32,66 @@ local function trace(msg)
 end
 
 local HUD_STRING_STYLE = core.String ~= nil and core.String or core.Line
+
+local function deleteHudLabel(id)
+    if core == nil or core.host == nil or id == nil then
+        return
+    end
+
+    pcall(function() core.host:execute("removeLabel", id) end)
+    pcall(function() core.host:execute("deleteLabel", id) end)
+    pcall(function() core.host:execute("clearLabel", id) end)
+end
+
+local function drawHudLabel(id, text, row, color)
+    if core == nil or core.host == nil then
+        return false
+    end
+
+    local ok = false
+
+    if not ok then
+        ok = pcall(function()
+            core.host:execute("drawLabel1", id, "TL", 8, 8 + row * 18, text, color)
+        end)
+    end
+
+    if not ok then
+        ok = pcall(function()
+            core.host:execute("drawLabel", id, "TL", 8, 8 + row * 18, text, color)
+        end)
+    end
+
+    if not ok then
+        ok = pcall(function()
+            core.host:execute("drawLabel1", id, text, "TL", row)
+        end)
+    end
+
+    if not ok then
+        ok = pcall(function()
+            core.host:execute("drawLabel", id, text, "TL", row)
+        end)
+    end
+
+    return ok
+end
+
+local function updateHudLabels(dayTypeText, tradeDayText, biasText)
+    local dayTypeId = state.hudPrefix .. "DAYTYPE"
+    local tradeDayId = state.hudPrefix .. "TRADEDAY"
+    local biasId = state.hudPrefix .. "BIAS"
+
+    deleteHudLabel(dayTypeId)
+    deleteHudLabel(tradeDayId)
+    deleteHudLabel(biasId)
+
+    local ok1 = drawHudLabel(dayTypeId, dayTypeText, 0, core.rgb(240, 240, 240))
+    local ok2 = drawHudLabel(tradeDayId, tradeDayText, 1, core.rgb(135, 206, 250))
+    local ok3 = drawHudLabel(biasId, biasText, 2, core.rgb(255, 215, 0))
+
+    state.hudCanDraw = ok1 and ok2 and ok3
+end
 
 function Init()
     indicator:name("SB DayType FRD FGD")
@@ -349,6 +412,8 @@ function Update(period, mode)
     local blockedText = result.tradeDayToday and "" or "BLOCKED: NOT TRADE DAY"
     local statusText = dayTypeText .. " | " .. tradeDayText .. " | " .. biasText
 
+    updateHudLabels(dayTypeText, tradeDayText, biasText)
+
     writeHudStream(state.hudDayTypeStream, period, dayTypeText, result.dFgd and 1 or (result.dFrd and -1 or 0))
     writeHudStream(state.hudTradeDayStream, period, tradeDayText, result.tradeDayToday and 1 or 0)
     writeHudStream(state.hudBiasStream, period, biasText, result.bias)
@@ -387,6 +452,10 @@ function Update(period, mode)
 end
 
 function ReleaseInstance()
+    deleteHudLabel(state.hudPrefix .. "DAYTYPE")
+    deleteHudLabel(state.hudPrefix .. "TRADEDAY")
+    deleteHudLabel(state.hudPrefix .. "BIAS")
+
     state.d1 = nil
     state.d1IndexByDateKey = {}
     state.lastDailyIndex = nil
