@@ -23,93 +23,13 @@ local function getHistory(instrument, tf, isBid)
     return nil
 end
 
-local function eval_rectangle(d1Idx)
-    if S.m15 == nil or S.d1 == nil or shared == nil then return {valid=false, bar_count=0} end
-    local dayStart = shared.day_key(S.d1:date(d1Idx))
-    local bars = {}
-    local i = S.m15:first()
-    local last = S.m15:size() - 1
-    while i <= last do
-        if shared.day_key(S.m15:date(i)) == dayStart then table.insert(bars, i) end
-        i = i + 1
-    end
-    local lookback = math.max(1, instance.parameters.rectangle_lookback_bars)
-    if #bars < lookback then return {valid=false, bar_count=#bars} end
-
-    local startPos = #bars - lookback + 1
-    local hi, lo = nil, nil
-    local contained = 0
-    for j = startPos, #bars do
-        local bi = bars[j]
-        local h, l, c = S.m15.high[bi], S.m15.low[bi], S.m15.close[bi]
-        if hi == nil or h > hi then hi = h end
-        if lo == nil or l < lo then lo = l end
-    end
-    for j = startPos, #bars do
-        local c = S.m15.close[bars[j]]
-        if c <= hi and c >= lo then contained = contained + 1 end
-    end
-
-    local atr = shared.calc_atr(S.d1, d1Idx, instance.parameters.dayatrlen)
-    local height = hi - lo
-    local atrOk = atr ~= nil and atr > 0 and height <= atr * instance.parameters.max_rectangle_height_atr
-
-    local last4expand = false
-    if #bars >= 4 then
-        local a = bars[#bars-3]
-        local b = bars[#bars]
-        last4expand = math.abs(S.m15.close[b] - S.m15.open[a]) > (height * 0.8)
-    end
-
-    return {
-        valid = atrOk and (contained >= instance.parameters.rectangle_min_contained_closes) and (not last4expand),
-        high = hi, low = lo, height = height, bar_count = lookback,
-        start_time = S.m15:date(bars[startPos]), end_time = S.m15:date(bars[#bars]),
-        contained = contained
-    }
-end
-
 local function build_day_record(dayIdx)
-    local base = shared and shared.evaluate_daytype(S.d1, dayIdx) or nil
-    if base == nil then return nil end
-    local rect = eval_rectangle(dayIdx)
-
-    local prevBase = shared.evaluate_daytype(S.d1, dayIdx - 1)
-    local prevRect = eval_rectangle(dayIdx - 1)
-    local todayOpen, todayClose = S.d1.open[dayIdx], S.d1.close[dayIdx]
-
-    local isFrdEvent = prevBase ~= nil and prevBase.is_pump_day and todayClose < todayOpen and rect.valid
-    local isFgdEvent = prevBase ~= nil and prevBase.is_dump_day and todayClose > todayOpen and rect.valid
-
-    local isFrdTradeCandidate = S.day_cache[dayIdx - 1] ~= nil and S.day_cache[dayIdx - 1].is_frd_event_day and S.day_cache[dayIdx - 1].has_valid_rectangle
-    local isFgdTradeCandidate = S.day_cache[dayIdx - 1] ~= nil and S.day_cache[dayIdx - 1].is_fgd_event_day and S.day_cache[dayIdx - 1].has_valid_rectangle
-
-    local consolidationScore = rect.valid and ((rect.contained >= 7 and rect.height <= (shared.calc_atr(S.d1, dayIdx, instance.parameters.dayatrlen) or 999)) and 2 or 1) or 0
-    local threeLevels = 0
-    if dayIdx - 5 >= S.d1:first() then
-        local wkHigh, wkLow = S.d1.high[dayIdx - 5], S.d1.low[dayIdx - 5]
-        if S.d1.high[dayIdx] > wkHigh or S.d1.low[dayIdx] < wkLow then threeLevels = 1 end
-        if (S.d1.high[dayIdx] > wkHigh and todayClose < todayOpen) or (S.d1.low[dayIdx] < wkLow and todayClose > todayOpen) then threeLevels = 2 end
-    end
-
-    return {
-        is_pump_day = base.is_pump_day,
-        is_dump_day = base.is_dump_day,
-        is_frd_event_day = isFrdEvent,
-        is_fgd_event_day = isFgdEvent,
-        is_frd_trade_day_candidate = isFrdTradeCandidate,
-        is_fgd_trade_day_candidate = isFgdTradeCandidate,
-        has_valid_rectangle = rect.valid,
-        rectangle_high = rect.high, rectangle_low = rect.low, rectangle_height = rect.height,
-        rectangle_bar_count = rect.bar_count, rectangle_start_time = rect.start_time, rectangle_end_time = rect.end_time,
-        bias = base.bias,
-        repeated_pump_score = base.is_pump_day and 1 or 0,
-        repeated_dump_score = base.is_dump_day and 1 or 0,
-        consolidation_score = consolidationScore,
-        three_levels_score = threeLevels,
-        event_score = consolidationScore + threeLevels,
-        trade_day_score = (isFrdTradeCandidate or isFgdTradeCandidate) and (consolidationScore + 1) or 0
-    }
+    return shared and shared.build_daytype_record(S.d1, S.m15, dayIdx, {
+        rectangle_lookback_bars = instance.parameters.rectangle_lookback_bars,
+        rectangle_min_contained_closes = instance.parameters.rectangle_min_contained_closes,
+        max_rectangle_height_atr = instance.parameters.max_rectangle_height_atr,
+        dayatrlen = instance.parameters.dayatrlen
+    }, S.day_cache) or nil
 end
 
 function Prepare(nameOnly)
