@@ -82,6 +82,19 @@
 - `daytype_bias`
 - `event_day_type`
 
+## 4.1) DayType 可視化輸出（顯示層規格）
+- 第一行固定顯示：`weekday`
+- 第二行/第三行可顯示：`FRD` / `FGD` / `Trade Day`（同一交易日可同時出現多行）
+- 即使當日沒有 FRD / FGD / Trade Day setup，仍需顯示 `weekday`
+
+顯示層只 consume `SB_DayType_FRD_FGD.lua` 的正式欄位：
+- `is_frd_event_day`
+- `is_fgd_event_day`
+- `is_frd_trade_day_candidate`
+- `is_fgd_trade_day_candidate`
+
+以上僅作為 DayType 顯示來源，**不是第二套邏輯來源**（不得在顯示層重算事件/候選邏輯）。
+
 另提供 DayType scoring stream：
 - `repeated_pump_score`
 - `repeated_dump_score`
@@ -123,5 +136,10 @@
    - `rectangle_height`
    - `rectangle_bar_count`
    - `rectangle_start_time` / `rectangle_end_time`
+
+另可在圖上按下列步驟檢查 DayType 可視化輸出：
+1. 新交易日起始 bar 可見 `weekday`。
+2. 有 setup 時，`weekday` 下方可見 `FRD` / `FGD` / `Trade Day`（可多行同日出現）。
+3. 無 setup 日時，僅 `weekday` 仍持續可見（不應空白）。
 
 以上 stream 在 false 狀態也會輸出 `0`，不會整塊空白，便於直接驗證。
