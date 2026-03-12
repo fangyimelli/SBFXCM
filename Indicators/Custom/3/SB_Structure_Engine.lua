@@ -8,6 +8,8 @@ local T = {}
 local H = {}
 local I = {}
 
+local HUD_STRING_STYLE = core.String ~= nil and core.String or core.Line
+
 local function trace(msg)
     if S.debug then
         pcall(function() core.host:trace("SB_Structure_Engine: " .. tostring(msg)) end)
@@ -208,6 +210,26 @@ local function safeAddStream(id, style, label, color, first)
         return nil
     end
     return stream
+end
+
+local function writeHudStream(stream, period, textValue, numericFallback)
+    if stream == nil then
+        return
+    end
+
+    local ok = pcall(function()
+        stream[period] = textValue
+    end)
+    if not ok then
+        stream[period] = numericFallback
+    end
+end
+
+local function toPriceText(value)
+    if value == nil then
+        return "N/A"
+    end
+    return tostring(value)
 end
 
 local function findHistoryIndexByTime(history, ts)
@@ -521,6 +543,36 @@ local function writeStructureStreams(period)
     if T.sweepdir ~= nil then
         T.sweepdir[period] = S.sweepDir
     end
+
+    local stateText = "STATE: IDLE"
+    if S.state == ASIAREADY then
+        stateText = "STATE: ASIA READY"
+    elseif S.state == SWEPT then
+        stateText = "STATE: SWEPT"
+    elseif S.state == BOS then
+        stateText = "STATE: BOS"
+    end
+
+    local asiaText = "ASIA HIGH: " .. toPriceText(S.asiaHigh) .. " | ASIA LOW: " .. toPriceText(S.asiaLow)
+
+    local sweepText = "SWEEP: NONE"
+    if S.sweepDir > 0 then
+        sweepText = "SWEEP DIR: BULL"
+    elseif S.sweepDir < 0 then
+        sweepText = "SWEEP DIR: BEAR"
+    end
+
+    local bosText = "BOS: NONE"
+    if S.bosDir > 0 then
+        bosText = "BOS DIR: BULL | BOS LEVEL: " .. toPriceText(S.bosLevel)
+    elseif S.bosDir < 0 then
+        bosText = "BOS DIR: BEAR | BOS LEVEL: " .. toPriceText(S.bosLevel)
+    end
+
+    writeHudStream(T.hud_structure_state, period, stateText, S.state)
+    writeHudStream(T.hud_asia, period, asiaText, 0)
+    writeHudStream(T.hud_sweep, period, sweepText, S.sweepDir)
+    writeHudStream(T.hud_bos, period, bosText, S.bosDir)
 end
 
 function Prepare(nameOnly)
@@ -555,6 +607,10 @@ function Prepare(nameOnly)
     T.boslevel = safeAddStream("boslevel", core.Line, "BOS Level", core.rgb(220, 20, 60), S.first)
     T.statedebug = safeAddStream("statedebug", core.Line, "State", core.rgb(138, 43, 226), S.first)
     T.sweepdir = safeAddStream("sweepdir", core.Line, "Sweep Dir", core.rgb(0, 191, 99), S.first)
+    T.hud_structure_state = safeAddStream("hud_structure_state", HUD_STRING_STYLE, "STATE", core.rgb(240, 240, 240), S.first)
+    T.hud_asia = safeAddStream("hud_asia", HUD_STRING_STYLE, "ASIA", core.rgb(135, 206, 250), S.first)
+    T.hud_sweep = safeAddStream("hud_sweep", HUD_STRING_STYLE, "SWEEP", core.rgb(255, 215, 0), S.first)
+    T.hud_bos = safeAddStream("hud_bos", HUD_STRING_STYLE, "BOS", core.rgb(255, 99, 71), S.first)
 
     H.m5 = safeGetHistory(S.source:instrument(), "m5", S.source:isBid())
     H.m15 = safeGetHistory(S.source:instrument(), "m15", S.source:isBid())
