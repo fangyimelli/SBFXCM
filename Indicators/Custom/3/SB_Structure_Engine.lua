@@ -1,721 +1,102 @@
-local IDLE = 0
-local ASIAREADY = 1
-local SWEPT = 2
-local BOS = 3
+local okShared, shared = pcall(dofile, "Indicators/Custom/3/SB_Playbook_Shared.lua")
+if not okShared then shared = nil end
 
-local S = {}
-local T = {}
-local H = {}
-local I = {}
-
-local HUD_STRING_STYLE = core.String ~= nil and core.String or core.Line
-
-local function trace(msg)
-    if S.debug then
-        pcall(function() core.host:trace("SB_Structure_Engine: " .. tostring(msg)) end)
-    end
-end
+local S={source=nil,first=nil,m15=nil,d1=nil,day_cache={},asia_high=nil,asia_low=nil,day_key=nil}
+local T={}
 
 function Init()
-    indicator:name("SB Structure Engine")
-    indicator:description("SB Structure Engine")
-    indicator:requiredSource(core.Bar)
-    indicator:type(core.Indicator)
-
-    indicator.parameters:addString("nysession", "NY Session", "", "0930-1600")
-    indicator.parameters:addString("asiasession", "Asia Session", "", "2000-0300")
-    indicator.parameters:addBoolean("prefilterlock", "Prefilter Lock", "", true)
-    indicator.parameters:addBoolean("allowafterny", "Allow After NY", "", true)
-    indicator.parameters:addBoolean("requiresbday", "Require SB Day", "", false)
-    indicator.parameters:addInteger("sweepminticks", "Sweep Min Ticks", "", 3)
-    indicator.parameters:addInteger("sweepatrlen", "Sweep ATR Len", "", 14)
-    indicator.parameters:addDouble("sweepminatrm", "Sweep Min ATR Mult", "", 0.1)
-    indicator.parameters:addInteger("sweepreclaimbars", "Sweep Reclaim Bars", "", 1)
-    indicator.parameters:addInteger("bosleft", "BOS Pivot Left", "", 2)
-    indicator.parameters:addInteger("bosright", "BOS Pivot Right", "", 2)
-    indicator.parameters:addInteger("bosconfirmbars", "BOS Confirm Bars", "", 1)
-    indicator.parameters:addDouble("bosminatra", "BOS Min ATR", "", 0.0)
-    indicator.parameters:addDouble("bosminatraP", "BOS Min ATR Percent", "", 0.0)
-    indicator.parameters:addBoolean("debug", "Debug", "", false)
-
-    indicator.parameters:addInteger("dayatrlen", "Day ATR Length", "", 14)
-    indicator.parameters:addDouble("dumppumpatrm", "Dump Pump ATR Mult", "", 1.0)
+ indicator:name("SB Structure Engine")
+ indicator:description("Structure confirmation only: Asia/Sweep/BOS/BIS")
+ indicator:requiredSource(core.Bar)
+ indicator:type(core.Indicator)
+ indicator.parameters:addInteger("bosleft", "BOS Left", "", 2)
+ indicator.parameters:addInteger("bosright", "BOS Right", "", 2)
+ indicator.parameters:addBoolean("debug", "Debug", "", false)
 end
 
-local function dayKey(ts)
-    return math.floor(ts)
-end
+local function getHistory(i,tf,b) local ok,h=pcall(function() return core.host:execute("getSyncHistory",i,tf,b,0,0) end); if ok then return h end return nil end
+local function pivotHigh(stream,p,l,r) if p<stream:first()+l or p+r>stream:size()-1 then return nil end local v=stream.high[p] for i=p-l,p+r do if i~=p and stream.high[i]>=v then return nil end end return v end
+local function pivotLow(stream,p,l,r) if p<stream:first()+l or p+r>stream:size()-1 then return nil end local v=stream.low[p] for i=p-l,p+r do if i~=p and stream.low[i]<=v then return nil end end return v end
 
-local function parseHHMM(hhmm)
-    if hhmm == nil then
-        return nil
-    end
-    local s = tostring(hhmm)
-    local hh, mm = string.match(s, "^(%d%d?)(%d%d)$")
-    if hh == nil then
-        hh, mm = string.match(s, "^(%d%d?):(%d%d)$")
-    end
-    hh = tonumber(hh)
-    mm = tonumber(mm)
-    if hh == nil or mm == nil or hh < 0 or hh > 23 or mm < 0 or mm > 59 then
-        return nil
-    end
-    return hh * 60 + mm
-end
-
-local function minuteOfDay(ts)
-    local f = ts - math.floor(ts)
-    if f < 0 then
-        f = f + 1
-    end
-    local m = math.floor(f * 1440 + 0.000001)
-    if m < 0 then
-        m = 0
-    elseif m > 1439 then
-        m = 1439
-    end
-    return m
-end
-
-local function inSession(ts, sess)
-    if sess == nil or sess == "" then
-        return false
-    end
-
-    local nowMin = minuteOfDay(ts)
-    for token in string.gmatch(sess, "[^,]+") do
-        local a, b = string.match(token, "^%s*(%d%d?:?%d%d)%s*%-%s*(%d%d?:?%d%d)%s*$")
-        if a ~= nil and b ~= nil then
-            local s = parseHHMM(a)
-            local e = parseHHMM(b)
-            if s ~= nil and e ~= nil then
-                if s <= e then
-                    if nowMin >= s and nowMin <= e then
-                        return true
-                    end
-                else
-                    if nowMin >= s or nowMin <= e then
-                        return true
-                    end
-                end
-            end
-        end
-    end
-
-    return false
-end
-
-local function pipSize(symbol)
-    if type(symbol) == "table" then
-        if symbol.pipSize ~= nil then
-            local ok, v = pcall(function() return symbol:pipSize() end)
-            if ok and v ~= nil then
-                return v
-            end
-        end
-        local okPoint, point = pcall(function() return symbol:pointSize() end)
-        if okPoint and point ~= nil and point > 0 then
-            return point * 10
-        end
-        local okInstr, name = pcall(function() return symbol:name() end)
-        if okInstr and name ~= nil then
-            symbol = name
-        else
-            symbol = ""
-        end
-    end
-
-    local s = string.upper(tostring(symbol or ""))
-    if string.find(s, "JPY", 1, true) ~= nil then
-        return 0.01
-    end
-    if string.find(s, "XAU", 1, true) ~= nil or string.find(s, "XAG", 1, true) ~= nil then
-        return 0.1
-    end
-    return 0.0001
-end
-
-local function pivotHigh(stream, p, left, right)
-    if stream == nil or p == nil then
-        return nil
-    end
-    local start = p - left
-    local stop = p + right
-    if start < stream:first() or stop > stream:size() - 1 then
-        return nil
-    end
-
-    local ph = stream.high[p]
-    local i = start
-    while i <= stop do
-        if i ~= p and stream.high[i] >= ph then
-            return nil
-        end
-        i = i + 1
-    end
-    return ph
-end
-
-local function pivotLow(stream, p, left, right)
-    if stream == nil or p == nil then
-        return nil
-    end
-    local start = p - left
-    local stop = p + right
-    if start < stream:first() or stop > stream:size() - 1 then
-        return nil
-    end
-
-    local pl = stream.low[p]
-    local i = start
-    while i <= stop do
-        if i ~= p and stream.low[i] <= pl then
-            return nil
-        end
-        i = i + 1
-    end
-    return pl
-end
-
-local function safeGetHistory(instrument, timeframe, isBid)
-    local ok, history = pcall(function()
-        return core.host:execute("getSyncHistory", instrument, timeframe, isBid, 0, 0)
-    end)
-
-    if not ok or history == nil then
-        trace("getSyncHistory failed for " .. tostring(timeframe))
-        return nil
-    end
-
-    return history
-end
-
-local function safeGetPriceStream(history, field)
-    if history == nil then
-        return nil
-    end
-    local ok, stream = pcall(function() return history[field] end)
-    if ok then
-        return stream
-    end
-    return nil
-end
-
-local function safeAddStream(id, style, label, color, first)
-    local ok, stream = pcall(function()
-        return instance:addStream(id, style, label, "", color, first)
-    end)
-    if not ok then
-        trace("addStream failed for " .. tostring(id))
-        return nil
-    end
-    return stream
-end
-
-local function writeHudStream(stream, period, textValue, numericFallback)
-    if stream == nil then
-        return
-    end
-
-    local ok = pcall(function()
-        stream[period] = textValue
-    end)
-    if not ok then
-        stream[period] = numericFallback
-    end
-end
-
-local function toPriceText(value)
-    if value == nil then
-        return "N/A"
-    end
-    return tostring(value)
-end
-
-local function findHistoryIndexByTime(history, ts)
-    if history == nil or ts == nil then
-        return nil
-    end
-
-    local target = dayKey(ts)
-    local i = history:first()
-    local last = history:size() - 1
-    local found = nil
-    while i <= last do
-        local d = history:date(i)
-        local k = dayKey(d)
-        if k > target then
-            break
-        end
-        if d <= ts then
-            found = i
-        else
-            break
-        end
-        i = i + 1
-    end
-    return found
-end
-
-local function calcATR(history, idx, len)
-    if history == nil or idx == nil or len == nil or len <= 0 then
-        return nil
-    end
-
-    local start = idx - len + 1
-    if start < history:first() + 1 then
-        return nil
-    end
-
-    local sum = 0
-    local count = 0
-    local i = start
-    while i <= idx do
-        local h = history.high[i]
-        local l = history.low[i]
-        local c1 = history.close[i - 1]
-        local tr = math.max(h - l, math.max(math.abs(h - c1), math.abs(l - c1)))
-        sum = sum + tr
-        count = count + 1
-        i = i + 1
-    end
-
-    if count == 0 then
-        return nil
-    end
-    return sum / count
-end
-
-local function resetForNewDay(ts)
-    S.dayKey = dayKey(ts)
-    S.state = IDLE
-    S.asiaHigh = nil
-    S.asiaLow = nil
-    S.sweepDir = 0
-    S.sweepTime = nil
-    S.sweepUsed = false
-    S.swingHigh = nil
-    S.swingLow = nil
-    S.bosDir = 0
-    S.bosLevel = nil
-    S.bosTime = nil
-    S.blockedReason = ""
-    S.bias = 0
-    S.isTradeDay = true
-end
-
-local function updateDayReset(period)
-    local ts = S.source:date(period)
-    local k = dayKey(ts)
-    if S.dayKey == nil or S.dayKey ~= k then
-        resetForNewDay(ts)
-    end
-end
-
-local function updateDayType(period)
-    S.bias = 0
-    S.isTradeDay = true
-
-    if H.d1 == nil then
-        if S.requiresbday then
-            S.isTradeDay = false
-            S.blockedReason = "no-d1"
-        end
-        return
-    end
-
-    local d1idx = findHistoryIndexByTime(H.d1, S.source:date(period))
-    if d1idx == nil then
-        if S.requiresbday then
-            S.isTradeDay = false
-            S.blockedReason = "no-d1idx"
-        end
-        return
-    end
-
-    local y = d1idx - 1
-    if y < H.d1:first() + 1 then
-        return
-    end
-
-    local atr = calcATR(H.d1, y, S.dayatrlen)
-    if atr == nil or atr <= 0 then
-        return
-    end
-
-    local delta = H.d1.close[y] - H.d1.close[y - 1]
-    local thr = atr * S.dumppumpatrm
-    if delta >= thr then
-        S.bias = 1
-    elseif delta <= -thr then
-        S.bias = -1
-    else
-        S.bias = 0
-    end
-
-    if S.requiresbday and S.bias == 0 then
-        S.isTradeDay = false
-        S.blockedReason = "bias0"
-    end
-end
-
-local function updateAsiaRange(period)
-    local ts = S.source:date(period)
-    local inAsia = inSession(ts, S.asiasession)
-    local inNY = inSession(ts, S.nysession)
-
-    if inAsia then
-        local h = S.source.high[period]
-        local l = S.source.low[period]
-        if S.asiaHigh == nil or h > S.asiaHigh then
-            S.asiaHigh = h
-        end
-        if S.asiaLow == nil or l < S.asiaLow then
-            S.asiaLow = l
-        end
-    end
-
-    if S.asiaHigh ~= nil and S.asiaLow ~= nil then
-        if (not inAsia and S.state == IDLE) or (S.prefilterlock and inNY and S.state == IDLE) then
-            S.state = ASIAREADY
-        end
-    end
-end
-
-local function updateSweep(period)
-    if S.state < ASIAREADY or S.sweepUsed then
-        return
-    end
-    if not S.allowafterny and not inSession(S.source:date(period), S.nysession) then
-        return
-    end
-    if not S.isTradeDay then
-        return
-    end
-    if H.m15 == nil or S.asiaHigh == nil or S.asiaLow == nil then
-        return
-    end
-
-    local idx = findHistoryIndexByTime(H.m15, S.source:date(period))
-    if idx == nil or idx <= H.m15:first() then
-        return
-    end
-    if S.lastM15SweepIdx ~= nil and idx <= S.lastM15SweepIdx then
-        return
-    end
-    S.lastM15SweepIdx = idx
-
-    local atr15 = calcATR(H.m15, idx - 1, S.sweepatrlen)
-    local instrumentPip = pipSize(S.source:instrument())
-    local tickFloor = S.sweepminticks * instrumentPip
-    local atrFloor = 0
-    if atr15 ~= nil then
-        atrFloor = atr15 * S.sweepminatrm
-    end
-    local threshold = math.max(tickFloor, atrFloor)
-
-    local h = H.m15.high[idx]
-    local l = H.m15.low[idx]
-    local c = H.m15.close[idx]
-
-    local upSweep = (h >= S.asiaHigh + threshold) and (c < S.asiaHigh)
-    local downSweep = (l <= S.asiaLow - threshold) and (c > S.asiaLow)
-
-    -- TODO: A+ (close reclaim across configurable reclaim bars) can be expanded later.
-    if upSweep then
-        S.sweepDir = 1
-        S.sweepTime = H.m15:date(idx)
-        S.sweepUsed = true
-        S.state = SWEPT
-        S.swingLow = nil
-        S.swingHigh = nil
-    elseif downSweep then
-        S.sweepDir = -1
-        S.sweepTime = H.m15:date(idx)
-        S.sweepUsed = true
-        S.state = SWEPT
-        S.swingLow = nil
-        S.swingHigh = nil
-    end
-end
-
-local function checkBosBreak(idx, level, dir)
-    if idx == nil or level == nil or dir == nil then
-        return false
-    end
-
-    local confirms = math.max(1, S.bosconfirmbars)
-    local i = 0
-    while i < confirms do
-        local k = idx - i
-        if k < H.m15:first() then
-            return false
-        end
-        if dir > 0 and H.m15.close[k] <= level then
-            return false
-        end
-        if dir < 0 and H.m15.close[k] >= level then
-            return false
-        end
-        i = i + 1
-    end
-
-    return true
-end
-
-local function updateBos(period)
-    if S.state < SWEPT or S.bosDir ~= 0 or H.m15 == nil then
-        return
-    end
-
-    local idx = findHistoryIndexByTime(H.m15, S.source:date(period))
-    if idx == nil then
-        return
-    end
-    if S.lastM15BosIdx ~= nil and idx <= S.lastM15BosIdx then
-        return
-    end
-    S.lastM15BosIdx = idx
-
-    local p = idx - S.bosright
-    if p == nil or p < H.m15:first() + S.bosleft then
-        return
-    end
-
-    local atr15 = calcATR(H.m15, idx - 1, S.sweepatrlen)
-
-    if S.sweepDir > 0 then
-        local pl = pivotLow(H.m15, p, S.bosleft, S.bosright)
-        if pl ~= nil then
-            S.swingLow = pl
-        end
-
-        local level = S.swingLow
-        if level ~= nil and H.m15.close[idx] < level and checkBosBreak(idx, level, -1) then
-            local dist = level - H.m15.close[idx]
-            local minMove = S.bosminatra
-            if atr15 ~= nil then
-                minMove = math.max(minMove, atr15 * S.bosminatraP)
-            end
-            if dist >= minMove then
-                S.bosDir = -1
-                S.bosLevel = level
-                S.bosTime = H.m15:date(idx)
-                S.state = BOS
-            end
-        end
-    elseif S.sweepDir < 0 then
-        local ph = pivotHigh(H.m15, p, S.bosleft, S.bosright)
-        if ph ~= nil then
-            S.swingHigh = ph
-        end
-
-        local level = S.swingHigh
-        if level ~= nil and H.m15.close[idx] > level and checkBosBreak(idx, level, 1) then
-            local dist = H.m15.close[idx] - level
-            local minMove = S.bosminatra
-            if atr15 ~= nil then
-                minMove = math.max(minMove, atr15 * S.bosminatraP)
-            end
-            if dist >= minMove then
-                S.bosDir = 1
-                S.bosLevel = level
-                S.bosTime = H.m15:date(idx)
-                S.state = BOS
-            end
-        end
-    end
-end
-
-local function writeStructureStreams(period)
-    if T.asiah ~= nil then
-        T.asiah[period] = S.asiaHigh
-    end
-    if T.asial ~= nil then
-        T.asial[period] = S.asiaLow
-    end
-    if T.boslevel ~= nil then
-        T.boslevel[period] = S.bosLevel
-    end
-    if T.statedebug ~= nil then
-        T.statedebug[period] = S.state
-    end
-    if T.sweepdir ~= nil then
-        T.sweepdir[period] = S.sweepDir
-    end
-
-    local stateText = "STATE: IDLE"
-    if S.state == ASIAREADY then
-        stateText = "STATE: ASIA READY"
-    elseif S.state == SWEPT then
-        stateText = "STATE: SWEPT"
-    elseif S.state == BOS then
-        stateText = "STATE: BOS"
-    end
-
-    local asiaText = "ASIA HIGH: " .. toPriceText(S.asiaHigh) .. " | ASIA LOW: " .. toPriceText(S.asiaLow)
-
-    local sweepText = "SWEEP: NONE"
-    if S.sweepDir > 0 then
-        sweepText = "SWEEP DIR: BULL"
-    elseif S.sweepDir < 0 then
-        sweepText = "SWEEP DIR: BEAR"
-    end
-
-    local bosText = "BOS: NONE"
-    if S.bosDir > 0 then
-        bosText = "BOS DIR: BULL | BOS LEVEL: " .. toPriceText(S.bosLevel)
-    elseif S.bosDir < 0 then
-        bosText = "BOS DIR: BEAR | BOS LEVEL: " .. toPriceText(S.bosLevel)
-    end
-
-    writeHudStream(T.hud_structure_state, period, stateText, S.state)
-    writeHudStream(T.hud_asia, period, asiaText, 0)
-    writeHudStream(T.hud_sweep, period, sweepText, S.sweepDir)
-    writeHudStream(T.hud_bos, period, bosText, S.bosDir)
+local function daytype(idx)
+ if S.day_cache[idx]~=nil then return S.day_cache[idx] end
+ local base = shared and shared.evaluate_daytype(S.d1, idx) or nil
+ if base==nil then return nil end
+ local rec = {is_frd_trade_day_candidate=false,is_fgd_trade_day_candidate=false,is_frd_event_day=false,is_fgd_event_day=false,bias=base.bias,rectangle_high=nil,rectangle_low=nil}
+ S.day_cache[idx]=rec
+ return rec
 end
 
 function Prepare(nameOnly)
-    trace("Prepare start")
-
-    if instance == nil then
-        trace("instance missing")
-        return
-    end
-
-    S.source = instance.source
-    if S.source == nil then
-        trace("source failed")
-        return
-    end
-    trace("source ok")
-
-    S.first = S.source:first()
-    if S.first == nil then
-        trace("first failed")
-        return
-    end
-
-    instance:name(profile:id() .. "(" .. S.source:name() .. ")")
-
-    if nameOnly then
-        return
-    end
-
-    S.nysession = instance.parameters.nysession
-    S.asiasession = instance.parameters.asiasession
-    S.prefilterlock = instance.parameters.prefilterlock
-    S.allowafterny = instance.parameters.allowafterny
-    S.requiresbday = instance.parameters.requiresbday
-    S.sweepminticks = instance.parameters.sweepminticks
-    S.sweepatrlen = instance.parameters.sweepatrlen
-    S.sweepminatrm = instance.parameters.sweepminatrm
-    S.sweepreclaimbars = instance.parameters.sweepreclaimbars
-    S.bosleft = instance.parameters.bosleft
-    S.bosright = instance.parameters.bosright
-    S.bosconfirmbars = instance.parameters.bosconfirmbars
-    S.bosminatra = instance.parameters.bosminatra
-    S.bosminatraP = instance.parameters.bosminatraP
-    S.debug = instance.parameters.debug
-    S.dayatrlen = instance.parameters.dayatrlen
-    S.dumppumpatrm = instance.parameters.dumppumpatrm
-    trace("parameters ok")
-
-    T.asiah = safeAddStream("asiah", core.Line, "Asia High", core.rgb(255, 140, 0), S.first)
-    T.asial = safeAddStream("asial", core.Line, "Asia Low", core.rgb(30, 144, 255), S.first)
-    T.boslevel = safeAddStream("boslevel", core.Line, "BOS Level", core.rgb(220, 20, 60), S.first)
-    T.statedebug = safeAddStream("statedebug", core.Line, "State", core.rgb(138, 43, 226), S.first)
-    T.sweepdir = safeAddStream("sweepdir", core.Line, "Sweep Dir", core.rgb(0, 191, 99), S.first)
-    T.hud_structure_state = safeAddStream("hud_structure_state", HUD_STRING_STYLE, "STATE", core.rgb(240, 240, 240), S.first)
-    T.hud_asia = safeAddStream("hud_asia", HUD_STRING_STYLE, "ASIA", core.rgb(135, 206, 250), S.first)
-    T.hud_sweep = safeAddStream("hud_sweep", HUD_STRING_STYLE, "SWEEP", core.rgb(255, 215, 0), S.first)
-    T.hud_bos = safeAddStream("hud_bos", HUD_STRING_STYLE, "BOS", core.rgb(255, 99, 71), S.first)
-
-    if T.asiah ~= nil and T.asial ~= nil and T.boslevel ~= nil and T.statedebug ~= nil and T.sweepdir ~= nil and T.hud_structure_state ~= nil and T.hud_asia ~= nil and T.hud_sweep ~= nil and T.hud_bos ~= nil then
-        trace("streams ok")
-    else
-        trace("streams failed")
-    end
-
-    H.m5 = safeGetHistory(S.source:instrument(), "m5", S.source:isBid())
-    H.m15 = safeGetHistory(S.source:instrument(), "m15", S.source:isBid())
-    H.d1 = safeGetHistory(S.source:instrument(), "D1", S.source:isBid())
-
-    if H.m5 ~= nil and H.m15 ~= nil and H.d1 ~= nil then
-        trace("history ok")
-    else
-        trace("history failed")
-        if H.m5 == nil then
-            trace("failed to create m5 history")
-        end
-        if H.m15 == nil then
-            trace("failed to create m15 history")
-        end
-        if H.d1 == nil then
-            trace("failed to create d1 history")
-        end
-    end
-
-    I.m15close = safeGetPriceStream(H.m15, "close")
-    if I.m15close == nil then
-        trace("failed to create m15close")
-    end
-
-    resetForNewDay(S.source:date(S.first))
-    trace("Prepare finish")
+ S.source=instance.source; S.first=S.source:first(); instance:name(profile:id().."("..S.source:name()..")"); if nameOnly then return end
+ S.m15=getHistory(S.source:instrument(),"m15",S.source:isBid())
+ S.d1=getHistory(S.source:instrument(),"D1",S.source:isBid())
+ T.has_asia_range=instance:addStream("has_asia_range",core.Line,"Has Asia Range","",core.rgb(255,165,0),S.first)
+ T.sweep_up=instance:addStream("has_asia_range_sweep_up",core.Line,"Sweep Up","",core.rgb(0,191,255),S.first)
+ T.sweep_down=instance:addStream("has_asia_range_sweep_down",core.Line,"Sweep Down","",core.rgb(255,99,71),S.first)
+ T.has_bos=instance:addStream("has_bos",core.Line,"Has BOS","",core.rgb(138,43,226),S.first)
+ T.bear_bis=instance:addStream("has_bearish_bis_below_rectangle",core.Line,"Bearish BIS","",core.rgb(220,20,60),S.first)
+ T.bull_bis=instance:addStream("has_bullish_bis_above_rectangle",core.Line,"Bullish BIS","",core.rgb(0,200,0),S.first)
+ T.has_session_sweep=instance:addStream("has_session_sweep",core.Line,"Session Sweep","",core.rgb(255,215,0),S.first)
+ T.structure_state=instance:addStream("structure_state",core.Line,"Structure State","",core.rgb(240,240,240),S.first)
+ T.structure_bias=instance:addStream("structure_bias",core.Line,"Structure Bias","",core.rgb(173,216,230),S.first)
+ T.frontback=instance:addStream("frontside_backside_score",core.Line,"FrontsideBacksideScore","",core.rgb(135,206,235),S.first)
+ T.trapped_longs=instance:addStream("trapped_longs_score",core.Line,"TrappedLongsScore","",core.rgb(250,128,114),S.first)
+ T.trapped_shorts=instance:addStream("trapped_shorts_score",core.Line,"TrappedShortsScore","",core.rgb(144,238,144),S.first)
 end
 
 function Update(period, mode)
-    trace("Update start")
+ if shared==nil or S.m15==nil or S.d1==nil or period<S.first then return end
+ local ts=S.source:date(period)
+ local k=shared.day_key(ts)
+ if S.day_key==nil or k~=S.day_key then S.day_key=k; S.asia_high=nil; S.asia_low=nil end
 
-    if S == nil or S.source == nil or S.first == nil then
-        trace("missing source/first")
-        return
-    end
+ local inAsia=shared.is_in_asia_window(ts)
+ if inAsia then
+   local h,l=S.source.high[period],S.source.low[period]
+   if S.asia_high==nil or h>S.asia_high then S.asia_high=h end
+   if S.asia_low==nil or l<S.asia_low then S.asia_low=l end
+ end
+ local hasAsia=S.asia_high~=nil and S.asia_low~=nil
+ local sweepUp=hasAsia and S.source.high[period]>S.asia_high and S.source.close[period]<S.asia_high
+ local sweepDown=hasAsia and S.source.low[period]<S.asia_low and S.source.close[period]>S.asia_low
 
-    if period < S.first then
-        return
-    end
+ local idx15=shared.find_history_index_by_time(S.m15, ts)
+ local hasBos=false
+ if idx15~=nil then
+   local p=idx15-2
+   local ph=pivotHigh(S.m15,p,instance.parameters.bosleft,instance.parameters.bosright)
+   local pl=pivotLow(S.m15,p,instance.parameters.bosleft,instance.parameters.bosright)
+   if ph~=nil and S.m15.close[idx15]>ph then hasBos=true end
+   if pl~=nil and S.m15.close[idx15]<pl then hasBos=true end
+ end
 
-    if H == nil or H.m5 == nil or H.m15 == nil or H.d1 == nil then
-        trace("missing histories")
-        return
-    end
+ local d1idx=shared.find_history_index_by_time(S.d1, ts)
+ local d=daytype(d1idx)
+ local rectHigh = d and d.rectangle_high or nil
+ local rectLow = d and d.rectangle_low or nil
+ local bearBis = rectLow~=nil and S.source.close[period]<rectLow and hasBos
+ local bullBis = rectHigh~=nil and S.source.close[period]>rectHigh and hasBos
 
-    if I == nil or I.m15close == nil then
-        trace("missing indicator m15close")
-        return
-    end
+ local fbScore=0
+ if hasBos then fbScore=1 end
+ if bearBis or bullBis then fbScore=2 end
+ local trappedLongs=(sweepUp and bearBis) and 2 or (sweepUp and 1 or 0)
+ local trappedShorts=(sweepDown and bullBis) and 2 or (sweepDown and 1 or 0)
 
-    if S.dayKey == nil then
-        trace("missing S.dayKey")
-    end
-    if S.bias == nil then
-        trace("missing S.bias")
-    end
-    if S.bosLevel == nil then
-        trace("missing S.bosLevel")
-    end
-
-    updateDayReset(period)
-    trace("day reset")
-    trace("core calculation start")
-    updateDayType(period)
-    updateAsiaRange(period)
-    updateSweep(period)
-    updateBos(period)
-    trace("core calculation finish")
-    writeStructureStreams(period)
-    trace("stream write finish")
+ T.has_asia_range[period]=hasAsia and 1 or 0
+ T.sweep_up[period]=sweepUp and 1 or 0
+ T.sweep_down[period]=sweepDown and 1 or 0
+ T.has_bos[period]=hasBos and 1 or 0
+ T.bear_bis[period]=bearBis and 1 or 0
+ T.bull_bis[period]=bullBis and 1 or 0
+ T.has_session_sweep[period]=(sweepUp or sweepDown) and 1 or 0
+ T.structure_state[period]=fbScore
+ T.structure_bias[period]=(bullBis and 1) or (bearBis and -1) or 0
+ T.frontback[period]=fbScore
+ T.trapped_longs[period]=trappedLongs
+ T.trapped_shorts[period]=trappedShorts
 end
 
-function ReleaseInstance()
-    H.m5 = nil
-    H.m15 = nil
-    H.d1 = nil
-    I.m15close = nil
-end
-
-
-function AsyncOperationFinished(cookie, success, message, message1, message2)
-end
+function ReleaseInstance() end
+function AsyncOperationFinished(cookie, success, message, message1, message2) end

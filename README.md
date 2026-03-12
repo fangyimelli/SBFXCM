@@ -1,112 +1,115 @@
-# SB Full Manual Workflow (FXCM Indicore Lua)
+# SB FRD/FGD 四層整合（現況版）
 
-## 四檔拆分與安裝路徑
-> 本專案以 `SB_Full_Manual_Workflow_FXCM.lua` 為 SSOT；四檔為部署與維護層級規劃，用於文件化拆分責任、載入順序與回歸驗證。
+> 本 README 只描述「目前程式真的有做的事」。
+> 資料流固定為 **DayType -> Structure -> Entry -> HUD**，HUD 僅顯示。
 
-| 檔名 | 角色 | 建議安裝路徑 |
-|---|---|---|
-| `SB_DayType_FXCM.lua` | DayType / bias / trade-day gating | `%APPDATA%\\Candleworks\\FXTS2\\Profiles\\Default\\Indicators\\Custom\\3\\` |
-| `SB_Structure_FXCM.lua` | Asia / Sweep / BOS / FVG 結構層 | `%APPDATA%\\Candleworks\\FXTS2\\Profiles\\Default\\Indicators\\Custom\\3\\` |
-| `SB_Entry_FXCM.lua` | Retest / Blue1-3 / score / slot 消耗 | `%APPDATA%\\Candleworks\\FXTS2\\Profiles\\Default\\Indicators\\Custom\\3\\` |
-| `SB_HUD_FXCM.lua` | HUD / debug / overlay stream 呈現 | `%APPDATA%\\Candleworks\\FXTS2\\Profiles\\Default\\Indicators\\Custom\\3\\` |
+## 1) 四隻 indicator 總覽
+- `SB_DayType_FRD_FGD.lua`：日級定義（Pump/Dump、FRD/FGD event day、trade-day candidate、rectangle、day/event score）。
+- `SB_Structure_Engine.lua`：結構確認（Asia range、session sweep、BOS、BIS、structure score）。
+- `SB_Entry_Qualifier.lua`：5m 進場條件（FRD/FGD EMA20 close back inside + follow-through score）。
+- `SB_Trade_Manager_HUD.lua`：純顯示與彙整（wired/not wired、implemented/not implemented）。
 
-## 建議載入順序（必照）
-1. `DayType`
-2. `Structure`
-3. `Entry`
-4. `HUD`
+## 2) 責任分工（強制邊界）
+- DayType 不做 BOS/BIS/entry/HUD。
+- Structure 不重定義 Pump/Dump/FRD/FGD/trade-day。
+- Entry 不重建 day-type 或 rectangle。
+- HUD 不做判定，只做 display。
 
-> 依序載入可避免下游模組讀取到未初始化 stream/state 的情況（尤其在 focus mode 與跨週期 map 初始化時）。
+## 3) 每隻 indicator 目前在做什麼
+### DayType
+- 以 D1 定義 Pump Day / Dump Day。
+- 以 D1 + m15 定義 FRD/FGD event day 與 rectangle。
+- 輸出 trade-day candidate（以前一日 event day 為基礎）。
+- 輸出 day/event score。
 
-## 每檔欄位對照（parameters / streams / state）
+### Structure
+- 只做 Asia range、sweep、BOS、BIS。
+- 目前有 score（FrontsideBackside、TrappedLongs、TrappedShorts）。
+- 目前未直接讀取 DayType stream（屬部分接線）。
 
-### 1) DayType
-- **Parameters**
-  - `requireSbDayType`, `dayMoveAtrLen`, `dumpPumpMinAtrMult`, `mrnBlock`, `tradeDayOnly`
-- **Streams**
-  - `TRADEDAY`, `INNY`, `DEBUG`
-- **State**
-  - `currentDayKey`, `blockedReason`, `focusStart`, `focusEnd`, `focusKey`
+### Entry
+- 僅在 5m close 判定。
+- FRD：bearish close back inside EMA20。
+- FGD：bullish close back inside EMA20。
+- 輸出 ready/triggered/price/follow-through score。
 
-### 2) Structure
-- **Parameters**
-  - `asiaSession`, `prefilterLock`, `sweepMinTicks`, `sweepAtrLen`, `sweepMinAtrMult`, `sweepReclaimBars`
-  - `bosSwingLeft`, `bosSwingRight`, `bosConfirmBars`, `bosMinAtrMultA`, `bosMinAtrMultAplus`
-  - `useFvg`, `fvgLookbackBars`, `fvgExpireMinutes`, `fvgMinAtrMultA`, `fvgMinAtrMultAplus`
-- **Streams**
-  - `ASIAH`, `ASIAL`, `BOSLV`, `FVGU`, `FVGL`, `HASBOS`, `FVGMIT`
-- **State**
-  - `sessionState(0~5)`, `asiaHigh`, `asiaLow`, `sweepUsed`, `sweepDir`, `sweepTime`
-  - `bosDir`, `bosLevel`, `bosTime`, `fvgU`, `fvgL`, `fvgTime`, `fvgMit`
+### HUD
+- 僅顯示接線狀態與落地狀態。
+- 目前明確顯示 `not wired / not implemented / display only`。
 
-### 3) Entry
-- **Parameters**
-  - `retestMode`, `retestBufferAtrMultA`, `retestBufferAtrMultAplus`, `entryExpireMinutes`
-  - `requireEma20ForBlue3`, `reactionWindowBars`, `requireReclaimForBlue2`, `enableRejectForBlue2`
-  - `rejectWickRatioMin`, `rejectBodyRatioMax`, `cooldownBlue1`, `cooldownBlue2`, `cooldownBlue3`, `consumeSlotOn`
-  - `scoreEnabled`, `scoreThresholdA`, `scoreThresholdAplus`, `weightNy`, `weightSweep`, `weightBos`, `weightFvg`, `weightEntry`, `dailyMaxTrades`, `minScoreToDisplay`
-- **Streams**
-  - `RETU`, `RETL`, `ENTRY`, `TP`, `SL`, `BLUE1`, `BLUE2`, `BLUE3`, `BLUE3S`, `SCORE`
-- **State**
-  - `retU`, `retL`, `retTime`, `dailyTrades`, `blue1Last`, `blue2Last`, `blue3Last`
+## 4) 每隻 indicator 的輸入 / 輸出 / 依賴
+- DayType：輸入 `source + D1 + m15`；輸出 Pump/Dump、event/trade candidate、rectangle、bias、score；依賴 `SB_Playbook_Shared.lua`。
+- Structure：輸入 `source + m15 + D1`；輸出 Asia/Sweep/BOS/BIS/structure score；依賴 `SB_Playbook_Shared.lua`。
+- Entry：輸入 `source + D1 + EMA20`；輸出 FRD/FGD entry ready/triggered + follow-through；依賴 `SB_Playbook_Shared.lua`。
+- HUD：輸入 `source`；輸出字串 HUD stream；依賴 `SB_Playbook_Shared.lua`（目前只做顯示狀態）。
 
-### 4) HUD
-- **Parameters**
-  - `showhud`, `debugMode`, `showDaytypeLabels`, `focusmode`, `focusdate`
-- **Streams**
-  - `DEBUG`（0/-1/-2/-9）與必要代理資訊 stream
-- **State**
-  - `inited`, `map5to15`, `map5toD`（時間對齊）
+## 5) 正式定義（目前程式版）
+- Pump Day：`high > 前一日 high`、`close 在當日 range 上半`、`close > open`、且不是 inside day。
+- Dump Day：`low < 前一日 low`、`close 在當日 range 下半`、`close < open`、且不是 inside day。
+- FRD event day：前一日 Pump Day + 當日紅K + 有效 rectangle。
+- FGD event day：前一日 Dump Day + 當日綠K + 有效 rectangle。
+- FRD trade-day candidate：前一日 FRD event day。
+- FGD trade-day candidate：前一日 FGD event day。
 
-## Removed / Deprecated Log
+## 6) consolidation rectangle 程式定義
+- 偵測窗：event day 最後 `8` 根 15m。
+- 至少 `6` 根 close 落在區間內。
+- 區間高度需小於 `ATR * 1.2`。
+- 若最後 4 根呈現明顯單邊擴張則視為無效。
+- 參數：
+  - `rectangle_lookback_bars=8`
+  - `rectangle_min_contained_closes=6`
+  - `max_rectangle_height_atr=1.2`
 
-- 2026-03-11：`SB_Full_Manual_Workflow_FXCM.lua` 退回最小可載入版（僅保留 Init/Prepare/Update/ReleaseInstance 與 3 個基礎參數 `debug/dayatrlen/dumppumpatrm`），移除舊有複雜策略執行路徑（legacy runtime logic deprecated）。
-- 2026-03-11：移除 `SB_Full_Manual_Workflow_FXCM.lua` 內大量分散 local strategy state（`asiaHigh/asiaLow/sweepDir/...`）；整併到 `S`（state SSOT）、`H`（history/map/focus）、`T`（streams）、`I`（ATR/EMA cache）容器，避免 `Update()` 捕捉過多 upvalues。
-- `SB_Full_Manual_Workflow_FXCM.lua`（舊單檔部署形式）標記為 **legacy-compatible**，文件層級改以四檔流程管理。
-- 舊邏輯中重複 gate 判斷路徑已合併為單一路徑（DayType -> Structure -> Entry），避免互斥條件在不同區塊重複覆寫。
-- `lineLifecycle` 仍保留為相容參數，但目前僅作設定保留，不作策略線段回收控制（deprecated behavior）。
+## 7) 功能分佈（放在哪一層）
+- DayType：Pump/Dump、event day、trade-day candidate、rectangle、day/event score。
+- Structure：Asia/sweep/BOS/BIS、FrontsideBackside、Trapped score。
+- Entry：FRD/FGD EMA20 entry、FollowThroughScore。
+- HUD：顯示與狀態標籤。
 
-## SSOT 與 debug 欄位變更紀錄
-- 2026-03-11：單檔 SSOT 改為「最小載入狀態表」：`S.debug/S.dayatrlen/S.dumppumpatrm/S.gate/S.cananswer/S.lastrule`；`Prepare/Update` 只更新判定紀錄，不進行策略計算。
-- 2026-03-11：debug 欄位顯示策略可回應能力改為狀態欄位 `S.cananswer` 與 gate 欄位 `S.gate`（UI/debug 可直接對應 state/gate）。
+## 8) 尚未完整落地
+- Structure 尚未直接 consume DayType stream（目前為部分落地）。
+- HUD 尚未接到上游 stream（故明確顯示 `not wired`）。
+- DayType 的 repeated push / three-level 為簡化代理。
 
-- **SSOT 政策**：交易狀態機規則以單一流程定義（DayType -> Structure -> Entry），HUD 僅消費上游結果，不回寫策略狀態。
-- **State Table（本次）**：
-  - `S`：策略狀態（Asia/Sweep/BOS/FVG/Retest/Blue/Score/Block/TradeCount/EntryTP_SL）
-  - `H`：history 與跨週期 map、focus 視窗（`h5/h15/hD/map5to15/map5toD/focusStart/focusEnd/focusKey`）
-  - `T`：stream handle 與輸出
-  - `I`：EMA/ATR fallback cache
-- **Debug 欄位**：
-  - `DEBUG = 0`：可評估/可交易
-  - `DEBUG = -1`：達到 `dailyMaxTrades`
-  - `DEBUG = -2`：gate block（非交易日、focus 不匹配或其他阻擋）
-  - `DEBUG = -9`：focus mode 視窗外
-- `debugMode` alert 訊息對齊為 gate/block 優先，避免同 bar 多訊息互相覆蓋。
+## 9) 不能放錯 indicator 的功能
+- 不能把 entry gate 寫到 HUD。
+- 不能把 day-type 定義寫到 Structure/Entry/HUD。
+- 不能把結構判定寫到 Entry。
 
-## 載入驗證步驟
-1. 將四檔放入同一路徑 `%APPDATA%\\Candleworks\\FXTS2\\Profiles\\Default\\Indicators\\Custom\\3\\`。
-2. 重啟 Marketscope 2.0，依序加入 `DayType -> Structure -> Entry -> HUD`。
-3. 在 m5 圖確認 `TRADEDAY/INNY/HASBOS/SCORE/DEBUG` streams 有輸出。
-4. 開啟 `focusmode=true` 並指定 `focusdate=YYYY-MM-DD`，確認視窗外 `DEBUG=-9`。
-5. 連續模擬訊號直到達 `dailyMaxTrades`，確認 `DEBUG=-1` 且不再新增 Blue3。
-6. 關閉 `requireSbDayType` 重新比對訊號數，確認 gate 解除後僅由結構與入場條件決策。
+## 10) 修改前 FRD/FGD 過多的原因
+- 舊版在 Structure/Entry/HUD 各自存在重複或替代邏輯（多點重算、語意混雜）。
 
-## 已知限制
-- `liveGradeMode=Auto` 仍為保留參數，未完成完整自動降級細則。
-- `allowEntryAfterSession`、`mrnBlock` 僅部分接線，尚未覆蓋完整時段封鎖策略。
-- `lineLifecycle` 僅保留輸入，未落實 NextBlue3/SessionEnd/DayEnd 線段回收。
-- Pine 的 label/box 視覺元素以 FXCM streams 替代，不提供 1:1 圖元渲染。
-- Focus mode 依賴足夠歷史資料；資料不足時可能誤判為無訊號日。
+## 11) 修改後改善
+- DayType 統一定義日級語意。
+- Entry 改為專職 FRD/FGD 的 EMA20 5m close entry。
+- HUD 改為只顯示，不再冒充邏輯來源。
 
-## 回歸規則（摘要）
-完整清單見 `docs/11-regression-rules.md`，每次修正 bug 需新增「Bug-ID -> 規則 -> 驗證命令/步驟 -> 預期結果」一條對應。
+## 12) 驗證方式
+1. DayType：看 `is_pump_day / is_dump_day / is_frd_event_day / is_fgd_event_day / is_frd_trade_day_candidate / is_fgd_trade_day_candidate / has_valid_rectangle / rectangle_high / rectangle_low`。
+2. Structure：看 `has_asia_range / has_asia_range_sweep_up / has_asia_range_sweep_down / has_bos / has_bearish_bis_below_rectangle / has_bullish_bis_above_rectangle`。
+3. Entry：看 `frd_entry_ready + frd_entry_triggered`（bearish close back inside EMA20）與 `fgd_entry_ready + fgd_entry_triggered`（bullish close back inside EMA20）。
+4. HUD：看 `wired/not wired`、`implemented/not implemented`、`display only`。
 
-## 狀態表（SB_Full_Manual_Workflow_FXCM.lua）
-| Gate State | 代碼 | 進入條件 | 離開條件 |
-|---|---:|---|---|
-| WAIT_ASIA | 0 | 新交易日初始化 | NY prefilter lock + Asia range ready |
-| ASIA_READY | 1 | `S.asiaHigh/S.asiaLow` 已建立 | Sweep 成立 |
-| SWEPT | 2 | Sweep + reclaim 成立 | BOS 成立 |
-| WAIT_FVG | 3 | BOS 後且 `useFvg=true` | FVG mitigated 或過期重置 |
-| WAIT_RETEST | 4 | BOS（或 FVG Mit 後） | retest hit -> entry window / 超時重置 |
-| ENTRY_WINDOW | 5 | Blue1 已觸發 | Blue3 成功或條件重置 |
+## 13) 後續維護規則
+- 未來只要改動四隻 indicator 任一層，README 必須同步更新且以實作現況為準。
+
+---
+
+## 統一時間窗（NY）
+由 `SB_Playbook_Shared.lua` 提供統一函式：
+- `is_in_asia_window`：19:00-23:00
+- `is_in_london_window`：01:00-05:00
+- `is_in_newyork_window`：07:00-11:00
+- `is_in_any_timing_window`
+- `is_near_window_open`：開窗後 15 分鐘或前 3 根 5m
+
+## Playbook 明文 vs 程式近似
+- 明文規則：責任分層、DayType->Structure->Entry->HUD、5m close 才可 entry、session 視窗。
+- 程式近似：Pump/Dump 數學條件、rectangle 數學條件、three-level/strike-zone、trapped/frontside-backside 打分。
+
+## 限制（必讀）
+- rectangle 為程式化近似，不是 playbook 唯一官方公式。
+- Pump/Dump 為程式化近似，不是 playbook 唯一官方公式。
+- three levels / strike zone 是程式化代理條件。
+- trapped traders / frontside-backside 是程式化代理條件。
