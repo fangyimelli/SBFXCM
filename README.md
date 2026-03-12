@@ -65,8 +65,8 @@
 - 若最後 4 根出現明顯單邊擴張（位移 > rectangle_height * 0.8），判 invalid
 - rectangle 目前只做 debug：
   - stream debug（`has_valid_rectangle`、`rectangle_high`、`rectangle_low`...）
-  - 圖上 debug rectangle（`rectangleHigh` / `rectangleLow` 線與框）
-- **不作為 FRD/FGD event 或 trade-day candidate gating 條件**
+  - 圖上 debug 可視化（至少 `rectangleHigh` / `rectangleLow` 水平線；debug 模式可額外畫框與標註）
+- **不作為 FRD/FGD event 或 trade-day candidate gating 條件，也不作為文字顯示 gating 條件**
 
 ## 4) 對外輸出欄位（可供下游 consume）
 - `is_pump_day`
@@ -86,12 +86,12 @@
 - `event_day_type`
 
 ## 4.1) DayType 可視化輸出（顯示層規格）
+- 顯示層已改為 owner-draw（`Prepare()` 內 `instance:ownerDrawn(true)`，`Draw(stage, context)` 在 `stage == 2` 繪製）
 - 第一行固定顯示：`weekday`
 - 第二行/第三行可顯示：`FRD` / `FGD` / `Trade Day`（同一交易日可同時出現多行）
 - 即使當日沒有 FRD / FGD / Trade Day setup，仍需顯示 `weekday`
-- 開啟 `debug=true` 時，會額外顯示 rectangle debug：
-  - `rectangleHigh`
-  - `rectangleLow`
+- stream 與圖上文字分離：stream 持續輸出供 debug / 下游 consume；圖上文字由 owner-draw 的 `drawText` 直接繪製
+- rectangle debug 可視化目前會畫 `rectangleHigh` / `rectangleLow` 水平線；僅作 debug，不作為 FRD/FGD/Trade Day 顯示 gating
 
 顯示層只 consume `SB_DayType_FRD_FGD.lua` 的正式欄位：
 - `is_frd_event_day`
