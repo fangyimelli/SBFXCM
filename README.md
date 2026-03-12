@@ -8,13 +8,14 @@
 - Pump Day / Dump Day（日級）
 - FRD / FGD event day（日級）
 - FRD / FGD trade-day candidate（僅候選標記）
-- consolidation rectangle（日級 + m15）
+- consolidation rectangle（日級 + m15，**目前僅 debug display**）
+- DayType 圖上 label（`weekday`、`FRD`、`FGD`、`Trade Day`）
 - daytype_bias、event_day_type
-- DayType 層 scoring（RepeatedPump/RepeatedDump、Consolidation、ThreeLevels）
 
 本輪**未在 DayType 實作**：
 - BOS / BIS / Asia range / sweep / structure state machine
-- 5m EMA20 entry 判定
+- Entry rule（例如 5m EMA20 entry）
+- 正式 scoring 規則（目前分數欄位僅保留為開發中/參考值）
 - HUD 顯示管理
 
 ## 2) 正式定義（目前程式版）
@@ -47,13 +48,11 @@
 ### FRD trade-day candidate
 同時滿足：
 - 前一交易日 `is_frd_event_day = true`
-- 前一交易日 `has_valid_rectangle = true`
 - 本日僅標記候選，等待下游 Entry consume
 
 ### FGD trade-day candidate
 同時滿足：
 - 前一交易日 `is_fgd_event_day = true`
-- 前一交易日 `has_valid_rectangle = true`
 - 本日僅標記候選，等待下游 Entry consume
 
 ## 3) consolidation rectangle（程式化定義）
@@ -64,7 +63,10 @@
 - 至少 `rectangle_min_contained_closes` 根 close 落在區間（預設 6）
 - 區間高度限制：`rectangle_height <= ATR(dayatrlen) * max_rectangle_height_atr`（預設 1.2）
 - 若最後 4 根出現明顯單邊擴張（位移 > rectangle_height * 0.8），判 invalid
-- 本階段 rectangle 僅用於 debug stream / 顯示，不阻擋 FRD/FGD event
+- rectangle 目前只做 debug：
+  - stream debug（`has_valid_rectangle`、`rectangle_high`、`rectangle_low`...）
+  - 圖上 debug rectangle（`rectangleHigh` / `rectangleLow` 線與框）
+- **不作為 FRD/FGD event 或 trade-day candidate gating 條件**
 
 ## 4) 對外輸出欄位（可供下游 consume）
 - `is_pump_day`
@@ -87,6 +89,9 @@
 - 第一行固定顯示：`weekday`
 - 第二行/第三行可顯示：`FRD` / `FGD` / `Trade Day`（同一交易日可同時出現多行）
 - 即使當日沒有 FRD / FGD / Trade Day setup，仍需顯示 `weekday`
+- 開啟 `debug=true` 時，會額外顯示 rectangle debug：
+  - `rectangleHigh`
+  - `rectangleLow`
 
 顯示層只 consume `SB_DayType_FRD_FGD.lua` 的正式欄位：
 - `is_frd_event_day`
@@ -96,27 +101,19 @@
 
 以上僅作為 DayType 顯示來源，**不是第二套邏輯來源**（不得在顯示層重算事件/候選邏輯）。
 
-另提供 DayType scoring stream：
-- `repeated_pump_score`
-- `repeated_dump_score`
-- `consolidation_score`
-- `three_levels_score`
-
 ## 5) 已實作 / 未實作
 ### 已實作
 - Pump Day / Dump Day 判定
 - FRD / FGD event day 判定（僅 Pump/Dump + next day close color，不受 rectangle gating）
-- FRD / FGD trade-day candidate（前一日 event + rectangle）
+- FRD / FGD trade-day candidate（僅由前一日 event 轉出）
 - rectangle valid / high / low / height / bar_count / start/end time
-- DayType debug streams（true/false 狀態可直接看）
-- DayType scoring：RepeatedPumpScore、RepeatedDumpScore、ConsolidationScore、ThreeLevelsScore
+- DayType 圖上 label：`FRD` / `FGD` / `Trade Day`
+- DayType rectangle debug display：`rectangleHigh` / `rectangleLow`
 
-### 部分實作
-- ThreeLevelsScore：目前為程式化代理版本（以最近 5 日高低與反向收盤條件估分）
-
-### 未實作（且不屬於本 indicator）
+### 未實作（或尚未定版）
+- Entry rule（例如 5m EMA20）
+- 正式 scoring 規則（目前 `repeated_* / consolidation / three_levels` 僅供開發中參考）
 - Structure 層訊號（BOS/BIS/sweep）
-- Entry 層 5m EMA20 進場
 - HUD 管理
 
 ## 6) 驗證方式（圖上直接可見）
@@ -130,7 +127,7 @@
 3. Trade-day candidate：
    - `is_frd_trade_day_candidate`
    - `is_fgd_trade_day_candidate`
-4. Rectangle：
+4. Rectangle debug：
    - `has_valid_rectangle`
    - `rectangle_high`
    - `rectangle_low`
@@ -141,6 +138,7 @@
 另可在圖上按下列步驟檢查 DayType 可視化輸出：
 1. 新交易日起始 bar 可見 `weekday`。
 2. 有 setup 時，`weekday` 下方可見 `FRD` / `FGD` / `Trade Day`（可多行同日出現）。
-3. 無 setup 日時，僅 `weekday` 仍持續可見（不應空白）。
+3. 開啟 `debug=true` 時，可見 `rectangleHigh` / `rectangleLow` 對應的 rectangle debug 線框。
+4. 無 setup 日時，僅 `weekday` 仍持續可見（不應空白）。
 
 以上 stream 在 false 狀態也會輸出 `0`，不會整塊空白，便於直接驗證。
