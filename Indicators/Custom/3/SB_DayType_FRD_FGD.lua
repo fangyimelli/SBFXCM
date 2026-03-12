@@ -14,6 +14,7 @@ local state = {
     hudDayTypeStream = nil,
     hudTradeDayStream = nil,
     hudBiasStream = nil,
+    hudSummaryStream = nil,
     hudBlockedStream = nil,
     d1IndexByDateKey = {},
     lastDailyIndex = nil
@@ -222,11 +223,13 @@ function Prepare(nameOnly)
     state.hudDayTypeStream = instance:addStream("hud_daytype", HUD_STRING_STYLE, "DAYTYPE", "", core.rgb(240, 240, 240), state.first)
     state.hudTradeDayStream = instance:addStream("hud_tradeday", HUD_STRING_STYLE, "TRADE DAY", "", core.rgb(135, 206, 250), state.first)
     state.hudBiasStream = instance:addStream("hud_bias", HUD_STRING_STYLE, "BIAS", "", core.rgb(255, 215, 0), state.first)
+    state.hudSummaryStream = instance:addStream("hud_summary", HUD_STRING_STYLE, "STATUS", "", core.rgb(255, 255, 255), state.first)
     state.hudBlockedStream = instance:addStream("hud_blocked", HUD_STRING_STYLE, "BLOCKED", "", core.rgb(255, 99, 71), state.first)
 
     local streamsOk = state.biasStream ~= nil and state.tradeDayStream ~= nil and state.fgdLabelStream ~= nil and
         state.frdLabelStream ~= nil and state.tradeLabelStream ~= nil and state.hudDayTypeStream ~= nil and
-        state.hudTradeDayStream ~= nil and state.hudBiasStream ~= nil and state.hudBlockedStream ~= nil
+        state.hudTradeDayStream ~= nil and state.hudBiasStream ~= nil and state.hudSummaryStream ~= nil and
+        state.hudBlockedStream ~= nil
     if streamsOk then
         trace("streams ok")
     else
@@ -328,9 +331,9 @@ function Update(period, mode)
     end
 
     local dayTypeText = "DAYTYPE: NONE"
-    if result.dFgd then
+    if result.yFgd then
         dayTypeText = "DAYTYPE: FGD"
-    elseif result.dFrd then
+    elseif result.yFrd then
         dayTypeText = "DAYTYPE: FRD"
     end
 
@@ -344,10 +347,12 @@ function Update(period, mode)
     end
 
     local blockedText = result.tradeDayToday and "" or "BLOCKED: NOT TRADE DAY"
+    local statusText = dayTypeText .. " | " .. tradeDayText .. " | " .. biasText
 
     writeHudStream(state.hudDayTypeStream, period, dayTypeText, result.dFgd and 1 or (result.dFrd and -1 or 0))
     writeHudStream(state.hudTradeDayStream, period, tradeDayText, result.tradeDayToday and 1 or 0)
     writeHudStream(state.hudBiasStream, period, biasText, result.bias)
+    writeHudStream(state.hudSummaryStream, period, statusText, result.bias)
     writeHudStream(state.hudBlockedStream, period, blockedText, result.tradeDayToday and 0 or 1)
 
     if state.showdaytypelabels then
