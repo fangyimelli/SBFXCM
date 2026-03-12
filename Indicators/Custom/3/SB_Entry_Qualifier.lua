@@ -32,6 +32,8 @@ local S = {}
 local T = {}
 local H = {}
 local I = {}
+local HUD_STRING_STYLE = core.String ~= nil and core.String or core.Line
+local writeHudStream = nil
 
 local IDLE, WAITFVG, WAITMIT, WAITRET, BLUE1, BLUE2, BLUE3, BLOCKED, EXPIRED, FAILED, DONE =
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
@@ -276,6 +278,74 @@ local function writeEntryStreams(period)
     if T.fvgmid ~= nil then
         T.fvgmid[period] = normalizeStreamValue(S.fvgMid)
     end
+
+    local bosReady = S.bosDir ~= nil and S.bosLevel ~= nil and S.bosTime ~= nil
+
+    local entryStateText = "ENTRY STATE: IDLE"
+    if S.state == WAITFVG then
+        entryStateText = "ENTRY STATE: WAIT FVG"
+    elseif S.state == WAITMIT then
+        entryStateText = "ENTRY STATE: WAIT MITIGATION"
+    elseif S.state == WAITRET then
+        entryStateText = "ENTRY STATE: WAIT RETEST"
+    elseif S.state == BLUE1 then
+        entryStateText = "ENTRY STATE: BLUE1"
+    elseif S.state == BLUE2 then
+        entryStateText = "ENTRY STATE: BLUE2"
+    elseif S.state == BLUE3 then
+        entryStateText = "ENTRY STATE: BLUE3"
+    elseif S.state == BLOCKED then
+        entryStateText = "ENTRY STATE: BLOCKED"
+    elseif S.state == EXPIRED then
+        entryStateText = "ENTRY STATE: EXPIRED"
+    elseif S.state == FAILED then
+        entryStateText = "ENTRY STATE: FAILED"
+    elseif S.state == DONE then
+        entryStateText = "ENTRY STATE: DONE"
+    end
+
+    local fvgText = "FVG: NONE"
+    if S.fvgUpper ~= nil and S.fvgLower ~= nil then
+        if (S.bosDir or 0) > 0 then
+            fvgText = "FVG: BULLISH"
+        elseif (S.bosDir or 0) < 0 then
+            fvgText = "FVG: BEARISH"
+        end
+    end
+
+    local mitigationText = (S.fvgMit == true) and "MITIGATION: DONE" or "MITIGATION: WAITING"
+
+    local retestText = S.retestHit == true and "RETEST: HIT" or "RETEST: WAITING"
+
+    local blueSignalText = "BLUE SIGNAL: NONE"
+    if S.state == BLUE3 then
+        blueSignalText = "BLUE SIGNAL: BLUE3"
+    elseif S.state == BLUE2 then
+        blueSignalText = "BLUE SIGNAL: BLUE2"
+    elseif S.state == BLUE1 then
+        blueSignalText = "BLUE SIGNAL: BLUE1"
+    end
+
+    writeHudStream(T.hud_bos_ready, period, bosReady and "BOS READY: YES" or "BOS READY: NO", bosReady and 1 or 0)
+    writeHudStream(T.hud_entry_state, period, entryStateText, S.state or IDLE)
+    writeHudStream(T.hud_fvg, period, fvgText, (S.bosDir or 0))
+    writeHudStream(T.hud_mitigation, period, mitigationText, S.fvgMit == true and 1 or 0)
+    writeHudStream(T.hud_retest, period, retestText, (retestText == "RETEST: HIT") and 1 or 0)
+    writeHudStream(T.hud_blue_signal, period, blueSignalText, (S.state == BLUE3 and 3) or (S.state == BLUE2 and 2) or (S.state == BLUE1 and 1) or 0)
+end
+
+writeHudStream = function(stream, period, textValue, numericFallback)
+    if stream == nil then
+        return
+    end
+
+    local ok = pcall(function()
+        stream[period] = textValue
+    end)
+
+    if not ok then
+        stream[period] = numericFallback
+    end
 end
 
 local function inCooldown(lastTs, minutes, nowTs)
@@ -361,6 +431,7 @@ function Prepare(nameOnly)
     S.fvgMid = nil
     S.fvgTime = nil
     S.fvgMit = nil
+    S.retestHit = false
     S.retestUpper = nil
     S.retestLower = nil
     S.retestTime = nil
@@ -412,6 +483,12 @@ function Prepare(nameOnly)
     T.blue2 = safeAddStream("blue2", core.Line, "Blue 2", core.rgb(65, 105, 225), first)
     T.blue3 = safeAddStream("blue3", core.Line, "Blue 3", core.rgb(0, 0, 255), first)
     T.statedebug = safeAddStream("statedebug", core.Line, "State", core.rgb(138, 43, 226), first)
+    T.hud_entry_state = safeAddStream("hud_entry_state", HUD_STRING_STYLE, "ENTRY STATE", core.rgb(240, 240, 240), first)
+    T.hud_bos_ready = safeAddStream("hud_bos_ready", HUD_STRING_STYLE, "BOS READY", core.rgb(135, 206, 250), first)
+    T.hud_fvg = safeAddStream("hud_fvg", HUD_STRING_STYLE, "FVG", core.rgb(255, 215, 0), first)
+    T.hud_mitigation = safeAddStream("hud_mitigation", HUD_STRING_STYLE, "MITIGATION", core.rgb(255, 160, 122), first)
+    T.hud_retest = safeAddStream("hud_retest", HUD_STRING_STYLE, "RETEST", core.rgb(144, 238, 144), first)
+    T.hud_blue_signal = safeAddStream("hud_blue_signal", HUD_STRING_STYLE, "BLUE SIGNAL", core.rgb(100, 149, 237), first)
     -- Optional stream: enable when runtime stability is confirmed.
     T.fvgmid = nil
 
@@ -828,6 +905,7 @@ function Update(period, mode)
     updateFvg(period)
     updateMitigation(period)
     local retestHit = updateRetest(period)
+    S.retestHit = retestHit == true
     updateBlueSignals(period, retestHit)
 
     writeEntryStreams(period)
