@@ -228,3 +228,40 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 4. **從 README 看責任邊界**
    - 直接對照本檔第 2~7 章
    - 每層「該做/不該做」皆已列出
+
+---
+
+## 11) 本輪（sandbox only）FRD/FGD 全面重構重點
+
+本輪僅修改 `Indicators/Custom/3/SB_DayType_FRD_FGD.lua`，classic mode / Structure / Entry / HUD 未改。\
+核心改動是把 FRD/FGD 拆成四層 SSOT：
+
+- Layer A: Previous Day Impulse Classification  
+  `prevIsPump` / `prevIsDump` 由方向 + ATR impulse + CLV 極端 + body ratio 共同決定
+- Layer B: Event Day Reversal Classification  
+  `basicFrd` / `basicFgd` 由 reversal 當日方向 + event ATR + event CLV 決定
+- Layer C: Qualified SB Event  
+  `qualifiedFrd` / `qualifiedFgd` 用 reclaim + qualityScore 決定是否加 `+`
+- Layer D: Next Day Trade Day  
+  `isTradeDay` 僅由前一日是否為 FRD/FGD event 對位，且當日若是 event 不畫 Trade Day
+
+### 新增/調整參數（DayType）
+- `impulseAtrMult`（default 1.3）
+- `impulseCloseExtreme`（default 0.7）
+- `impulseBodyRatioMin`（default 0.5）
+- `eventAtrMult`（default 0.6）
+- `eventCloseExtreme`（default 0.7）
+- `reclaimRatioMin`（default 0.5）
+- `qualityscoremin`（延用，僅控制 `+`）
+
+### 顯示與審計
+- 正式 label：`FRD` / `FRD+` / `FGD` / `FGD+` / `Trade Day`
+- `debug=true` 時增加 near-miss 訊號：`Near FRD` / `Near FGD`
+- `state.dayMarks[dateKey]` 追加完整欄位（prev/event 指標、basic/qualified、trade、quality、failReasons）
+- 新增 `auditSymmetry()`，debug 下若不對稱會 trace：
+  `AUDIT WARNING: FRD/FGD asymmetry detected`
+
+### 可驗證結果（靜態檢查）
+1. `basicFrd/basicFgd` 與 `qualifiedFrd/qualifiedFgd` 已分離，quality 不再吞掉 basic event。  
+2. `Trade Day` 由 `D` 日 event 對位到 `D+1`，且與 event label 互斥。  
+3. FRD/FGD 條件使用對稱 gate（ATR、CLV、reclaim、score 維度一致）。
