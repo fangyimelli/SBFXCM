@@ -49,7 +49,8 @@
 - 正式圖面移除所有舊結構術語輸出：`BOS`、`CHoCH`、`Break in Structure`、`swing`、`trend`、`bias` 等 label。
 - 新增 consolidation state SSOT（`id/high/low/startBar/lastInsideBar/active/brokenDown`），並以此作為 BIS 唯一來源。
 - BIS 改為僅支援「向下跌破 consolidation low」且單次觸發去重（同一 consolidation id 只觸發一次）。
-- 新增 trade-day 統一 gate：`canRenderStructure = isTradeDay`（由上游輸入 `upstreamistradeday` 決定），所有正式渲染皆經過同一 gate。
-- 新增上游 day type 串接 stub input：`upstreamistradeday`、`upstreamisfrd`、`upstreamisfgd`、`upstreambias`，structure 不再自行重建 Trade Day 判定。
+- 新增 trade-day 統一 gate：`canRenderStructure = isTradeDay`（由 DayType upstream stream `is_trade_day` 決定），所有正式渲染皆經過同一 gate。
+- 新增 DayType upstream 直連參數：`daytype_trade_day_stream`、`daytype_frd_event_stream`、`daytype_fgd_event_stream`、`daytype_bias_stream`，直接讀取 `is_trade_day/is_frd_event_day/is_fgd_event_day/day_bias`。
+- 新增 `manualoverride`（debug only）：僅在手動除錯時才回退到 `upstreamistradeday/upstreamisfrd/upstreamisfgd/upstreambias`，避免誤認為已自動串接。
 - Session High/Low 改為 BIS 後第二層輔助標示，維持低噪音（只顯示目前有效 session levels 與更新事件）。
 - debug mode 保留（預設關閉），僅觀察內部狀態，不繞過正式渲染 gate。
