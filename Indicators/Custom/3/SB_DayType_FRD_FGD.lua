@@ -110,38 +110,49 @@ end
 
 function GetDayTypeLabels(period, dayRecord)
     if period == nil or dayRecord == nil then return {} end
+    local rec = dayRecord
 
     local labels = {}
-    if dayRecord.isTradeDay or dayRecord.is_frd_trade_day_candidate or dayRecord.is_fgd_trade_day_candidate then
+    if rec.isTradeDay or rec.is_frd_trade_day_candidate or rec.is_fgd_trade_day_candidate then
         labels[#labels + 1] = "Trade Day"
         return labels
     end
 
-    if dayRecord.isFgd or dayRecord.is_fgd_event_day then
-        labels[#labels + 1] = dayRecord.isHighQualityFgd and "FGD+" or "FGD"
-    elseif dayRecord.isFrd or dayRecord.is_frd_event_day then
-        labels[#labels + 1] = dayRecord.isHighQualityFrd and "FRD+" or "FRD"
+    if rec.isFgd or rec.is_fgd_event_day then
+        labels[#labels + 1] = rec.isHighQualityFgd and "FGD+" or "FGD"
+    elseif rec.isFrd or rec.is_frd_event_day then
+        labels[#labels + 1] = rec.isHighQualityFrd and "FRD+" or "FRD"
     end
 
     return labels
 end
 
-local function build_audit_lines(dayRecord)
-    if dayRecord == nil then return {} end
+local function get_day_mark_by_idx(day_idx)
+    if S.d1 == nil or day_idx == nil then return nil end
+    local ts = S.d1:date(day_idx)
+    if ts == nil then return nil end
+    local dateKey = math.floor(ts)
+    if dateKey == nil then return nil end
+    return S.dayMarks[dateKey]
+end
+
+local function build_audit_lines(day_idx, dayRecord)
+    local rec = dayRecord or get_day_mark_by_idx(day_idx)
+    if rec == nil then return {} end
     if not instance.parameters.debug then return {} end
 
-    if dayRecord.isTradeDay then
-        return {"From:" .. tostring(dayRecord.tradeFromRule or "N/A")}
+    if rec.isTradeDay then
+        return {"From:" .. tostring(rec.tradeFromRule or "N/A")}
     end
 
-    if not (dayRecord.isFrd or dayRecord.isFgd or dayRecord.nearMissFrd or dayRecord.nearMissFgd) then return {} end
+    if not (rec.isFrd or rec.isFgd or rec.nearMissFrd or rec.nearMissFgd) then return {} end
 
-    local prevText = dayRecord.prevIsPump and "Pump" or (dayRecord.prevIsDump and "Dump" or "Neutral")
-    local eventText = dayRecord.eventDown and "Down" or (dayRecord.eventUp and "Up" or "Flat")
-    local ruleText = dayRecord.isFrd and "FRD" or (dayRecord.isFgd and "FGD" or "Near")
-    local lines = {"Prev:" .. prevText, "Event:" .. eventText, "Rule:" .. ruleText, string.format("Q:%d(%s)", tonumber(dayRecord.qualityScore) or 0, dayRecord.qualityGrade or "")}
-    if dayRecord.nearMissFrd then lines[#lines + 1] = "Near FRD" end
-    if dayRecord.nearMissFgd then lines[#lines + 1] = "Near FGD" end
+    local prevText = rec.prevIsPump and "Pump" or (rec.prevIsDump and "Dump" or "Neutral")
+    local eventText = rec.eventDown and "Down" or (rec.eventUp and "Up" or "Flat")
+    local ruleText = rec.isFrd and "FRD" or (rec.isFgd and "FGD" or "Near")
+    local lines = {"Prev:" .. prevText, "Event:" .. eventText, "Rule:" .. ruleText, string.format("Q:%d(%s)", tonumber(rec.qualityScore) or 0, rec.qualityGrade or "")}
+    if rec.nearMissFrd then lines[#lines + 1] = "Near FRD" end
+    if rec.nearMissFgd then lines[#lines + 1] = "Near FGD" end
     return lines
 end
 
@@ -154,7 +165,7 @@ local function build_audit_panel_lines(lastDayIdx)
     local lines = {}
     local yn = function(v) return v and "Y" or "N" end
     for i = first, lastDayIdx do
-        local rec = build_day_record(i)
+        local rec = get_day_mark_by_idx(i)
         if rec ~= nil and rec.dateLabel ~= nil then
             lines[#lines + 1] = rec.dateLabel
             lines[#lines + 1] = string.format("PrevPump=%s PrevDump=%s", yn(rec.prevIsPump), yn(rec.prevIsDump))
@@ -898,29 +909,15 @@ local function build_day_record(day_idx)
 
     local dateKey = rec.dateKey
     if dateKey ~= nil then
-        S.dayMarks[dateKey] = {
-            dateKey = rec.dateKey,
-            prevDateKey = rec.prevDateKey,
-            nextDateKey = rec.nextDateKey,
-            prevOpen = rec.prevOpen, prevHigh = rec.prevHigh, prevLow = rec.prevLow, prevClose = rec.prevClose,
-            prevRange = rec.prevRange, prevAtr = rec.prevAtr, prevClv = rec.prevClv, prevBodyRatio = rec.prevBodyRatio,
-            eventOpen = rec.eventOpen, eventHigh = rec.eventHigh, eventLow = rec.eventLow, eventClose = rec.eventClose,
-            eventRange = rec.eventRange, eventAtr = rec.eventAtr, eventClv = rec.eventClv,
-            prevIsPump = rec.prevIsPump, prevIsDump = rec.prevIsDump,
-            basicFrd = rec.basicFrd, basicFgd = rec.basicFgd,
-            qualifiedFrd = rec.qualifiedFrd, qualifiedFgd = rec.qualifiedFgd,
-            isTradeDay = rec.isTradeDay,
-            reclaimRatioFrd = rec.reclaimRatioFrd, reclaimRatioFgd = rec.reclaimRatioFgd,
-            qualityScoreFrd = rec.qualityScoreFrd, qualityScoreFgd = rec.qualityScoreFgd,
-            qualityGradeFrd = rec.qualityGradeFrd, qualityGradeFgd = rec.qualityGradeFgd,
-            nearMissFrd = rec.nearMissFrd, nearMissFgd = rec.nearMissFgd,
-            failReasons = rec.failReasons
-        }
+        S.dayMarks[dateKey] = rec
 
         if instance.parameters.debug and (rec.nearMissFrd or rec.nearMissFgd) then
             debug_output(string.format("%s near-miss FRD=%s FGD=%s fail(eventRange=%s,eventClv=%s,reclaim=%s)",
                 rec.dateLabel, tostring(rec.nearMissFrd), tostring(rec.nearMissFgd),
                 tostring(rec.failReasons.eventRangeFail), tostring(rec.failReasons.eventClvFail), tostring(rec.failReasons.reclaimFail)))
+        end
+        if instance.parameters.debug then
+            debug_output(string.format("day mark upsert date=%s source=SSOT", tostring(dateKey)))
         end
     end
 
@@ -990,8 +987,11 @@ function Draw(stage, context)
     for period = from, to do
         if IsNewTradingDay(period) then
             local d1_idx = find_history_index_by_time(S.d1, S.source:date(period))
-            local d = build_day_record(d1_idx)
+            local d = get_day_mark_by_idx(d1_idx)
             if d ~= nil then
+                if instance.parameters.debug then
+                    debug_output(string.format("draw fetch date=%s source=SSOT", tostring(d.dateKey)))
+                end
                 local x = safe_value(context, "positionOfBar", period)
                 if x == nil then
                     x = safe_value(context, "positionOfDate", S.source:date(period))
@@ -1010,7 +1010,7 @@ function Draw(stage, context)
                             draw_text(context, S.draw.dayTypeFont, label, get_day_type_color(label), x, y)
                         end
 
-                        local auditLines = build_audit_lines(d)
+                        local auditLines = build_audit_lines(d1_idx, d)
                         for i = 1, #auditLines do
                             local y = y1 + weekdayLineHeight + (#labels * dayTypeLineHeight) + ((i - 1) * dayTypeLineHeight)
                             draw_text(context, S.draw.debugFont or S.draw.dayTypeFont, auditLines[i], instance.parameters.InactiveTextColor, x, y)
@@ -1057,8 +1057,17 @@ function Update(period, mode)
     local d1_idx = find_history_index_by_time(S.d1, S.source:date(period))
     if d1_idx == nil or d1_idx <= S.d1:first() + 1 then return end
 
-    local d = build_day_record(d1_idx)
+    build_day_record(d1_idx)
+    if d1_idx - 1 >= S.d1:first() + 1 then
+        build_day_record(d1_idx - 1)
+    end
+
+    local d = get_day_mark_by_idx(d1_idx)
     if d == nil then return end
+
+    if instance.parameters.debug then
+        debug_output(string.format("update fetch date=%s source=SSOT", tostring(d.dateKey)))
+    end
 
     T.pump[period] = d.is_pump_day and 1 or 0
     T.dump[period] = d.is_dump_day and 1 or 0
