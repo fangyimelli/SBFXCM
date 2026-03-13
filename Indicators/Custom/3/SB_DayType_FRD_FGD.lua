@@ -105,6 +105,22 @@ local function should_force_refresh_for_active_day(dayRecord)
     return dayRecord.dateKey == lastDateKey
 end
 
+local function day_ohlc_signature(dayRecord)
+    if dayRecord == nil then return nil end
+
+    local o = tonumber(dayRecord.eventOpen)
+    local h = tonumber(dayRecord.eventHigh)
+    local l = tonumber(dayRecord.eventLow)
+    local c = tonumber(dayRecord.eventClose)
+    local dateKey = tonumber(dayRecord.dateKey)
+
+    if dateKey == nil or o == nil or h == nil or l == nil or c == nil then
+        return nil
+    end
+
+    return string.format("%d|%.10f|%.10f|%.10f|%.10f", dateKey, o, h, l, c)
+end
+
 local function request_owner_draw_refresh(period, dayRecord)
     if instance == nil or instance.parameters == nil then return end
     if not instance.parameters.debug and not instance.parameters.ShowDayTypeLabels then return end
