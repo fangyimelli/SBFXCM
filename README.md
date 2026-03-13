@@ -10,6 +10,7 @@
 - FRD / FGD trade-day candidate（僅候選標記）
 - consolidation rectangle（日級 + m15，**目前僅 debug display**）
 - DayType 圖上 label（`weekday`、`FRD`、`FGD`、`Trade Day`）
+- DayType 圖上 near-miss label（`FRD?`、`FGD?`，可選擇顯示 fail reason）
 - daytype_bias、event_day_type
 
 本輪**未在 DayType 實作**：
@@ -106,6 +107,11 @@ Label 顯示：
 - `FRD`
 - `FGD`
 - `Trade Day`
+- `FRD?` / `FGD?`（當 near-miss 成立且 `ShowNearMissLabels=true`）
+
+Near-miss 可視化控制參數：
+- `ShowNearMissLabels`：是否顯示 `FRD?` / `FGD?`
+- `ShowNearMissReasons`：是否在 near-miss 後加上失敗原因，例如 `FRD?(Range)`、`FGD?(CLV/Reclaim)`
 
 ---
 
