@@ -151,8 +151,10 @@ local function build_audit_lines(day_idx, dayRecord)
     local eventText = rec.eventDown and "Down" or (rec.eventUp and "Up" or "Flat")
     local ruleText = rec.isFrd and "FRD" or (rec.isFgd and "FGD" or "Near")
     local lines = {"Prev:" .. prevText, "Event:" .. eventText, "Rule:" .. ruleText, string.format("Q:%d(%s)", tonumber(rec.qualityScore) or 0, rec.qualityGrade or "")}
-    if rec.nearMissFrd then lines[#lines + 1] = "Near FRD" end
-    if rec.nearMissFgd then lines[#lines + 1] = "Near FGD" end
+    if rec.nearMissBasicFrd then lines[#lines + 1] = "Near FRD(Basic)" end
+    if rec.nearMissQualifiedFrd then lines[#lines + 1] = "Near FRD(+)" end
+    if rec.nearMissBasicFgd then lines[#lines + 1] = "Near FGD(Basic)" end
+    if rec.nearMissQualifiedFgd then lines[#lines + 1] = "Near FGD(+)" end
     return lines
 end
 
@@ -834,24 +836,34 @@ local function build_day_record(day_idx)
     local isFgdTradeCandidate = isTradeDay and prev_rec ~= nil and prev_rec.basicFgd
     local tradeFromRule = isFrdTradeCandidate and "FRD" or (isFgdTradeCandidate and "FGD" or nil)
 
-    local nearMissFrd = false
-    local nearMissFgd = false
-    local missCountFrd = 0
-    local missCountFgd = 0
+    local nearMissBasicFrd = false
+    local nearMissQualifiedFrd = false
+    local nearMissBasicFgd = false
+    local nearMissQualifiedFgd = false
     if prevIsPump and eventDown then
-        if not eventRangePass then missCountFrd = missCountFrd + 1 end
-        if not eventClvLowPass then missCountFrd = missCountFrd + 1 end
-        if not reclaimPassFrd then missCountFrd = missCountFrd + 1 end
-        if qualityScoreFrd < qualityScoreMin then missCountFrd = missCountFrd + 1 end
-        nearMissFrd = (missCountFrd == 1) and (not basicFrd or not qualifiedFrd)
+        local basicMissFrd = 0
+        if not eventRangePass then basicMissFrd = basicMissFrd + 1 end
+        if not eventClvLowPass then basicMissFrd = basicMissFrd + 1 end
+        nearMissBasicFrd = (not basicFrd) and (basicMissFrd == 1)
+
+        local qualifiedMissFrd = 0
+        if not reclaimPassFrd then qualifiedMissFrd = qualifiedMissFrd + 1 end
+        if qualityScoreFrd < qualityScoreMin then qualifiedMissFrd = qualifiedMissFrd + 1 end
+        nearMissQualifiedFrd = basicFrd and (not qualifiedFrd) and (qualifiedMissFrd == 1)
     end
     if prevIsDump and eventUp then
-        if not eventRangePass then missCountFgd = missCountFgd + 1 end
-        if not eventClvHighPass then missCountFgd = missCountFgd + 1 end
-        if not reclaimPassFgd then missCountFgd = missCountFgd + 1 end
-        if qualityScoreFgd < qualityScoreMin then missCountFgd = missCountFgd + 1 end
-        nearMissFgd = (missCountFgd == 1) and (not basicFgd or not qualifiedFgd)
+        local basicMissFgd = 0
+        if not eventRangePass then basicMissFgd = basicMissFgd + 1 end
+        if not eventClvHighPass then basicMissFgd = basicMissFgd + 1 end
+        nearMissBasicFgd = (not basicFgd) and (basicMissFgd == 1)
+
+        local qualifiedMissFgd = 0
+        if not reclaimPassFgd then qualifiedMissFgd = qualifiedMissFgd + 1 end
+        if qualityScoreFgd < qualityScoreMin then qualifiedMissFgd = qualifiedMissFgd + 1 end
+        nearMissQualifiedFgd = basicFgd and (not qualifiedFgd) and (qualifiedMissFgd == 1)
     end
+    local nearMissFrd = nearMissBasicFrd or nearMissQualifiedFrd
+    local nearMissFgd = nearMissBasicFgd or nearMissQualifiedFgd
 
     local rec = {
         sourceDate = S.d1:date(day_idx),
@@ -881,6 +893,8 @@ local function build_day_record(day_idx)
         prevClvPass = (basicFrd and prevClvHighPass) or (basicFgd and prevClvLowPass) or false,
         reclaimPass = (basicFrd and reclaimPassFrd) or (basicFgd and reclaimPassFgd) or false,
 
+        nearMissBasicFrd = nearMissBasicFrd, nearMissBasicFgd = nearMissBasicFgd,
+        nearMissQualifiedFrd = nearMissQualifiedFrd, nearMissQualifiedFgd = nearMissQualifiedFgd,
         nearMissFrd = nearMissFrd, nearMissFgd = nearMissFgd,
         isFrd = isFrdEvent, isFgd = isFgdEvent,
         isHighQualityFrd = qualifiedFrd, isHighQualityFgd = qualifiedFgd,
@@ -898,12 +912,29 @@ local function build_day_record(day_idx)
         repeated_pump_score = prevIsPump and 1 or 0, repeated_dump_score = prevIsDump and 1 or 0, consolidation_score = rect.valid and 1 or 0, three_levels_score = 0,
 
         failReasons = {
-            prevRangeFail = not prevRangePass,
-            prevClvFail = (prevClose > prevOpen and not prevClvHighPass) or (prevClose < prevOpen and not prevClvLowPass),
-            prevBodyFail = not prevBodyRatioPass,
-            eventRangeFail = not eventRangePass,
-            eventClvFail = (eventUp and not eventClvHighPass) or (eventDown and not eventClvLowPass),
-            reclaimFail = (basicFrd and not reclaimPassFrd) or (basicFgd and not reclaimPassFgd)
+            basic = {
+                prevRangeFail = not prevRangePass,
+                prevClvFail = (prevClose > prevOpen and not prevClvHighPass) or (prevClose < prevOpen and not prevClvLowPass),
+                prevBodyFail = not prevBodyRatioPass,
+                frd = {
+                    eventRangeFail = prevIsPump and eventDown and not eventRangePass,
+                    eventClvFail = prevIsPump and eventDown and not eventClvLowPass
+                },
+                fgd = {
+                    eventRangeFail = prevIsDump and eventUp and not eventRangePass,
+                    eventClvFail = prevIsDump and eventUp and not eventClvHighPass
+                }
+            },
+            qualified = {
+                frd = {
+                    reclaimFail = prevIsPump and eventDown and not reclaimPassFrd,
+                    qualityFail = prevIsPump and eventDown and qualityScoreFrd < qualityScoreMin
+                },
+                fgd = {
+                    reclaimFail = prevIsDump and eventUp and not reclaimPassFgd,
+                    qualityFail = prevIsDump and eventUp and qualityScoreFgd < qualityScoreMin
+                }
+            }
         }
     }
 
@@ -912,9 +943,16 @@ local function build_day_record(day_idx)
         S.dayMarks[dateKey] = rec
 
         if instance.parameters.debug and (rec.nearMissFrd or rec.nearMissFgd) then
-            debug_output(string.format("%s near-miss FRD=%s FGD=%s fail(eventRange=%s,eventClv=%s,reclaim=%s)",
-                rec.dateLabel, tostring(rec.nearMissFrd), tostring(rec.nearMissFgd),
-                tostring(rec.failReasons.eventRangeFail), tostring(rec.failReasons.eventClvFail), tostring(rec.failReasons.reclaimFail)))
+            debug_output(string.format("%s near-miss FRD(Basic=%s,+=%s) FGD(Basic=%s,+=%s)",
+                rec.dateLabel,
+                tostring(rec.nearMissBasicFrd), tostring(rec.nearMissQualifiedFrd),
+                tostring(rec.nearMissBasicFgd), tostring(rec.nearMissQualifiedFgd)))
+            debug_output(string.format("%s fail basic(FRD range=%s clv=%s; FGD range=%s clv=%s) qualified(FRD reclaim=%s quality=%s; FGD reclaim=%s quality=%s)",
+                rec.dateLabel,
+                tostring(rec.failReasons.basic.frd.eventRangeFail), tostring(rec.failReasons.basic.frd.eventClvFail),
+                tostring(rec.failReasons.basic.fgd.eventRangeFail), tostring(rec.failReasons.basic.fgd.eventClvFail),
+                tostring(rec.failReasons.qualified.frd.reclaimFail), tostring(rec.failReasons.qualified.frd.qualityFail),
+                tostring(rec.failReasons.qualified.fgd.reclaimFail), tostring(rec.failReasons.qualified.fgd.qualityFail)))
         end
         if instance.parameters.debug then
             debug_output(string.format("day mark upsert date=%s source=SSOT", tostring(dateKey)))
