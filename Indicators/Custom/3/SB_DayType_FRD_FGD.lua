@@ -35,6 +35,8 @@ function Init()
     indicator.parameters:addInteger("auditlookbackdays", "Full Audit Lookback Days", "", 30)
     indicator.parameters:addBoolean("ShowWeekdayLabels", "Show Weekday Labels", "", true)
     indicator.parameters:addBoolean("ShowDayTypeLabels", "Show DayType Labels", "", true)
+    indicator.parameters:addBoolean("ShowNearMissLabels", "Show Near-Miss Labels", "", true)
+    indicator.parameters:addBoolean("ShowNearMissReasons", "Show Near-Miss Reasons", "", true)
     indicator.parameters:addInteger("WeekdayFontSize", "Weekday Font Size", "", 10)
     indicator.parameters:addInteger("DayTypeFontSize", "DayType Font Size", "", 10)
     indicator.parameters:addColor("WeekdayTextColor", "Weekday Text Color", "", core.rgb(180, 180, 180))
@@ -179,6 +181,41 @@ function GetDayTypeLabels(period, dayRecord)
     if period == nil or dayRecord == nil then return {} end
     local rec = dayRecord
 
+    local function join_reason(parts)
+        if parts == nil or #parts == 0 then return nil end
+        local text = parts[1]
+        for i = 2, #parts do
+            text = text .. "/" .. parts[i]
+        end
+        return text
+    end
+
+    local function near_miss_reason(prefix)
+        if not instance.parameters.ShowNearMissReasons then return prefix end
+        if rec.failReasons == nil then return prefix end
+
+        local reasons = {}
+        if prefix == "FRD?" then
+            local frdBasic = rec.failReasons.basic ~= nil and rec.failReasons.basic.frd or nil
+            local frdQualified = rec.failReasons.qualified ~= nil and rec.failReasons.qualified.frd or nil
+            if frdBasic ~= nil and frdBasic.eventRangeFail then reasons[#reasons + 1] = "Range" end
+            if frdBasic ~= nil and frdBasic.eventClvFail then reasons[#reasons + 1] = "CLV" end
+            if frdQualified ~= nil and frdQualified.reclaimFail then reasons[#reasons + 1] = "Reclaim" end
+            if frdQualified ~= nil and frdQualified.qualityFail then reasons[#reasons + 1] = "Quality" end
+        elseif prefix == "FGD?" then
+            local fgdBasic = rec.failReasons.basic ~= nil and rec.failReasons.basic.fgd or nil
+            local fgdQualified = rec.failReasons.qualified ~= nil and rec.failReasons.qualified.fgd or nil
+            if fgdBasic ~= nil and fgdBasic.eventRangeFail then reasons[#reasons + 1] = "Range" end
+            if fgdBasic ~= nil and fgdBasic.eventClvFail then reasons[#reasons + 1] = "CLV" end
+            if fgdQualified ~= nil and fgdQualified.reclaimFail then reasons[#reasons + 1] = "Reclaim" end
+            if fgdQualified ~= nil and fgdQualified.qualityFail then reasons[#reasons + 1] = "Quality" end
+        end
+
+        local reasonText = join_reason(reasons)
+        if reasonText == nil then return prefix end
+        return string.format("%s(%s)", prefix, reasonText)
+    end
+
     local labels = {}
     if rec.isTradeDay or rec.is_frd_trade_day_candidate or rec.is_fgd_trade_day_candidate then
         labels[#labels + 1] = "Trade Day"
@@ -189,6 +226,10 @@ function GetDayTypeLabels(period, dayRecord)
         labels[#labels + 1] = rec.isHighQualityFgd and "FGD+" or "FGD"
     elseif rec.isFrd or rec.is_frd_event_day then
         labels[#labels + 1] = rec.isHighQualityFrd and "FRD+" or "FRD"
+    elseif instance.parameters.ShowNearMissLabels and rec.nearMissFrd then
+        labels[#labels + 1] = near_miss_reason("FRD?")
+    elseif instance.parameters.ShowNearMissLabels and rec.nearMissFgd then
+        labels[#labels + 1] = near_miss_reason("FGD?")
     end
 
     return labels
@@ -560,6 +601,10 @@ local function get_day_type_color(label)
         return instance.parameters.FGDTextColor
     elseif label == "Trade Day" then
         return instance.parameters.TradeDayTextColor
+    elseif string.sub(label, 1, 4) == "FRD?" then
+        return instance.parameters.InactiveTextColor
+    elseif string.sub(label, 1, 4) == "FGD?" then
+        return instance.parameters.InactiveTextColor
     end
     return instance.parameters.InactiveTextColor
 end
