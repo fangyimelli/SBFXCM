@@ -37,3 +37,13 @@
 - 參數 SSOT 統一為 `debug/dayatrlen/dumppumpatrm`，`Prepare()` 讀取 id 與 `Init()` 宣告完全一致。
 - 移除與本次目標無關之策略邏輯（getHistory/addStream/EMA/ATR/FVG/Blue/score/focus 等），避免匯入時參數與平台 API 互斥。
 - 新增最小狀態表欄位：`S.gate`、`S.cananswer`、`S.lastrule`，用於顯式 gate 狀態與每次輸入判定紀錄。
+
+## 2026-03-13
+- 重構 `Indicators/Custom/3/SB_Structure_Engine.lua` 正式輸出主線為 `Consolidation -> BIS -> Session High/Session Low`。
+- 正式圖面移除所有舊結構術語輸出：`BOS`、`CHoCH`、`Break in Structure`、`swing`、`trend`、`bias` 等 label。
+- 新增 consolidation state SSOT（`id/high/low/startBar/lastInsideBar/active/brokenDown`），並以此作為 BIS 唯一來源。
+- BIS 改為僅支援「向下跌破 consolidation low」且單次觸發去重（同一 consolidation id 只觸發一次）。
+- 新增 trade-day 統一 gate：`canRenderStructure = isTradeDay`（由上游輸入 `upstreamistradeday` 決定），所有正式渲染皆經過同一 gate。
+- 新增上游 day type 串接 stub input：`upstreamistradeday`、`upstreamisfrd`、`upstreamisfgd`、`upstreambias`，structure 不再自行重建 Trade Day 判定。
+- Session High/Low 改為 BIS 後第二層輔助標示，維持低噪音（只顯示目前有效 session levels 與更新事件）。
+- debug mode 保留（預設關閉），僅觀察內部狀態，不繞過正式渲染 gate。
