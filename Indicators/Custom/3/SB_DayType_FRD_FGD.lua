@@ -7,7 +7,7 @@ local PEN_RECT_LOW = 22
 local PEN_DAY_DIVIDER = 23
 local PEN_WEEKEND_DAY_DIVIDER = 24
 
-local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, dayMarks={}, lastFullAuditDayKey=nil, symmetryAudit=nil, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW, dayDividerPen=PEN_DAY_DIVIDER, weekendDayDividerPen=PEN_WEEKEND_DAY_DIVIDER, refreshThrottleMs=300, lastRefreshClockMs=0, lastRefreshDateKey=nil, inRefreshRequest=false, pendingForcedRefresh=false, lastSeenDateKey=nil, lastSeenOhlcSig=nil}}
+local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, day_cache_meta={}, dayMarks={}, lastFullAuditDayKey=nil, symmetryAudit=nil, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW, dayDividerPen=PEN_DAY_DIVIDER, weekendDayDividerPen=PEN_WEEKEND_DAY_DIVIDER, refreshThrottleMs=300, lastRefreshClockMs=0, lastRefreshDateKey=nil, inRefreshRequest=false}}
 local T = {}
 
 function Init()
@@ -83,34 +83,11 @@ local function debug_output(msg)
 end
 
 local function now_clock_millis()
-    local function normalize_time_ms(raw)
-        local n = tonumber(raw)
-        if n == nil then return nil end
-        if n > 1000000000000 then return math.floor(n) end
-        if n > 1000000000 then return math.floor(n * 1000) end
-        if n > 40000 and n < 80000 then
-            return math.floor((n - 25569) * 86400000)
-        end
-        if n > 1000000 then return math.floor(n * 1000) end
-        return nil
-    end
-
-    local platformNow = nil
     if core ~= nil and core.host ~= nil then
-        platformNow = safe_value(core.host, "execute", "getServerTime")
-            or safe_value(core.host, "execute", "getHistoryServerTime")
-            or safe_value(core.host, "execute", "getTime")
-            or safe_value(core.host, "now")
-    end
-    if platformNow == nil and core ~= nil then
-        platformNow = safe_value(core, "now")
-    end
-
-    local normalized = normalize_time_ms(platformNow)
-    if normalized ~= nil then return normalized end
-
-    if type(os) == "table" and type(os.time) == "function" then
-        return math.floor(os.time() * 1000)
+        local serverTime = safe_value(core.host, "execute", "getServerTime")
+        if type(serverTime) == "number" then
+            return math.floor(serverTime * 24 * 60 * 60 * 1000)
+        end
     end
     if type(os) == "table" and type(os.clock) == "function" then
         return math.floor(os.clock() * 1000)
@@ -118,13 +95,14 @@ local function now_clock_millis()
     return 0
 end
 
-local function day_ohlc_signature(dayRecord)
-    if dayRecord == nil then return nil end
-    local o = tonumber(dayRecord.eventOpen) or 0
-    local h = tonumber(dayRecord.eventHigh) or 0
-    local l = tonumber(dayRecord.eventLow) or 0
-    local c = tonumber(dayRecord.eventClose) or 0
-    return string.format("%.10f|%.10f|%.10f|%.10f", o, h, l, c)
+local function should_force_refresh_for_active_day(dayRecord)
+    if dayRecord == nil or dayRecord.dateKey == nil or S.d1 == nil then return false end
+    local lastIdx = S.d1:size() - 1
+    if lastIdx < S.d1:first() then return false end
+    local lastTs = S.d1:date(lastIdx)
+    if lastTs == nil then return false end
+    local lastDateKey = math.floor(lastTs)
+    return dayRecord.dateKey == lastDateKey
 end
 
 local function request_owner_draw_refresh(period, dayRecord)
@@ -152,9 +130,8 @@ local function request_owner_draw_refresh(period, dayRecord)
     local nowMs = now_clock_millis()
     local throttleMs = tonumber(S.draw.refreshThrottleMs) or 300
     local throttledReady = (nowMs - (S.draw.lastRefreshClockMs or 0)) >= throttleMs
-    local eventDriven = isNewDay or dayChanged or dayRecalculated
-    local forceRetry = S.draw.pendingForcedRefresh == true
-    if not eventDriven and not forceRetry and not throttledReady then return end
+    local forceRefresh = should_force_refresh_for_active_day(d)
+    if not forceRefresh and not isNewDay and not dayChanged and not throttledReady then return end
 
     -- ownerDrawn refresh: owner-drawn labels rely on Draw(), so Update() should proactively request repaint/invalidate.
     local requested = false
@@ -183,12 +160,16 @@ local function request_owner_draw_refresh(period, dayRecord)
             S.draw.lastRefreshDateKey = d.dateKey
         end
         if instance.parameters.debug then
-            debug_output(string.format("refresh requested (invalidate/repaint) isNewDay=%s dayChanged=%s dayRecalculated=%s throttledReady=%s requested=%s forceRetry=%s",
-                tostring(isNewDay), tostring(dayChanged), tostring(dayRecalculated), tostring(throttledReady), tostring(requested), tostring(forceRetry)))
+            debug_output(string.format(
+                "refresh requested (invalidate/repaint) newDay=%s dayChanged=%s throttled=%s force=%s",
+                tostring(isNewDay), tostring(dayChanged), tostring(throttledReady), tostring(forceRefresh)
+            ))
         end
     elseif instance.parameters.debug then
-        debug_output(string.format("refresh deferred/fallback isNewDay=%s dayChanged=%s dayRecalculated=%s throttledReady=%s requested=%s forceRetry=%s",
-            tostring(isNewDay), tostring(dayChanged), tostring(dayRecalculated), tostring(throttledReady), tostring(requested), tostring(forceRetry)))
+        debug_output(string.format(
+            "refresh failed newDay=%s dayChanged=%s throttled=%s force=%s",
+            tostring(isNewDay), tostring(dayChanged), tostring(throttledReady), tostring(forceRefresh)
+        ))
     end
 end
 
@@ -970,7 +951,29 @@ end
 
 build_day_record = function(day_idx)
     if day_idx == nil or day_idx <= S.d1:first() + 1 then return nil end
-    if S.day_cache[day_idx] ~= nil then return S.day_cache[day_idx] end
+    local lastIdx = S.d1:size() - 1
+    local isActiveDay = day_idx == lastIdx
+    local cachedRec = S.day_cache[day_idx]
+    local cachedMeta = S.day_cache_meta[day_idx]
+
+    if cachedRec ~= nil and not isActiveDay then
+        return cachedRec
+    end
+
+    if cachedRec ~= nil and isActiveDay then
+        local sameAsCache = cachedMeta ~= nil
+            and cachedMeta.open == S.d1.open[day_idx]
+            and cachedMeta.high == S.d1.high[day_idx]
+            and cachedMeta.low == S.d1.low[day_idx]
+            and cachedMeta.close == S.d1.close[day_idx]
+            and cachedMeta.ts == S.d1:date(day_idx)
+        if sameAsCache then
+            return cachedRec
+        end
+        if instance.parameters.debug then
+            debug_output(string.format("active day changed -> recalc date=%s", tostring(day_key(S.d1:date(day_idx)))))
+        end
+    end
 
     local rect = eval_rectangle(S.d1, S.m15, day_idx)
     local epsilon = 0.0000001
@@ -1180,6 +1183,13 @@ build_day_record = function(day_idx)
     end
 
     S.day_cache[day_idx] = rec
+    S.day_cache_meta[day_idx] = {
+        ts = S.d1:date(day_idx),
+        open = S.d1.open[day_idx],
+        high = S.d1.high[day_idx],
+        low = S.d1.low[day_idx],
+        close = S.d1.close[day_idx]
+    }
     return rec
 end
 
@@ -1191,7 +1201,11 @@ function Prepare(nameOnly)
     if nameOnly then return end
     instance:ownerDrawn(true)
     S.day_cache = {}
+    S.day_cache_meta = {}
     S.dayMarks = {}
+    S.draw.lastRefreshClockMs = 0
+    S.draw.lastRefreshDateKey = nil
+    S.draw.inRefreshRequest = false
     S.lastFullAuditDayKey = nil
     S.symmetryAudit = audit_symmetry()
 

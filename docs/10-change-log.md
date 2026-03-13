@@ -39,6 +39,12 @@
 - 新增最小狀態表欄位：`S.gate`、`S.cananswer`、`S.lastrule`，用於顯式 gate 狀態與每次輸入判定紀錄。
 
 ## 2026-03-13
+- 修正 `SB_DayType_FRD_FGD.lua` 當日 D1 快取凍結問題：最後一個 D1 交易日改為「OHLC/時間戳變動即重算」，避免 FRD/FGD 標籤不更新或消失。
+- 新增 `day_cache_meta`（open/high/low/close/ts）以判斷 active day 是否需重建 `day_record`。
+- 強化 owner-draw 重繪機制：
+  - `now_clock_millis()` 優先使用 `getServerTime`（可用時），降低 `os.clock()` 對 UI 節流不穩定的影響。
+  - active day 期間加入 `forceRefresh` 條件，避免僅靠節流造成標籤刷新延遲。
+  - debug 模式新增 refresh 觸發與失敗原因輸出（newDay/dayChanged/throttled/force）。
 - 重構 `Indicators/Custom/3/SB_Structure_Engine.lua` 正式輸出主線為 `Consolidation -> BIS -> Session High/Session Low`。
 - 正式圖面移除所有舊結構術語輸出：`BOS`、`CHoCH`、`Break in Structure`、`swing`、`trend`、`bias` 等 label。
 - 新增 consolidation state SSOT（`id/high/low/startBar/lastInsideBar/active/brokenDown`），並以此作為 BIS 唯一來源。
