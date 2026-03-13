@@ -55,6 +55,20 @@ local function safeTextSet(out, period, price, text)
     out:set(period, price, text)
 end
 
+local function minuteOfDay(ts)
+    if ts == nil then return nil end
+    local f = ts - math.floor(ts)
+    if f < 0 then f = f + 1 end
+    local m = math.floor(f * 1440 + 0.000001)
+    if m < 0 then m = 0 elseif m > 1439 then m = 1439 end
+    return m
+end
+
+local function inBisWindow(ts)
+    local m = minuteOfDay(ts)
+    return m ~= nil and m >= 0 and m < (9 * 60 + 30)
+end
+
 local function clearEvents(ev)
     ev.consolidationCreated = nil
     ev.bisFired = nil
@@ -117,6 +131,7 @@ local function detectConsolidation(period, canRender)
     local con = st.consolidation
     local ev = st.events
     local src = S.source
+    local canFireBis = inBisWindow(src:date(period))
 
     if not canRender then
         con.active = false
@@ -139,17 +154,21 @@ local function detectConsolidation(period, canRender)
             con.lastInsideBar = period
             con.endBar = period
         elseif brokeUp then
-            if ev.lastBisConsolidationId ~= con.id then
+            if canFireBis and ev.lastBisConsolidationId ~= con.id then
                 con.active = false
                 ev.bisFired = { id = con.id, bar = period, price = src.high[period], sourceHigh = con.high, dir = "up" }
                 ev.lastBisConsolidationId = con.id
+            else
+                con.active = false
             end
         elseif brokeDown then
-            if ev.lastBisConsolidationId ~= con.id then
+            if canFireBis and ev.lastBisConsolidationId ~= con.id then
                 con.brokenDown = true
                 con.active = false
                 ev.bisFired = { id = con.id, bar = period, price = src.low[period], sourceLow = con.low, dir = "down" }
                 ev.lastBisConsolidationId = con.id
+            else
+                con.active = false
             end
         elseif candidate ~= nil then
             con.high = candidate.high
@@ -271,11 +290,13 @@ local function render(period, canRender)
         disp.consShown = true
     end
 
-    if ev.bisFired ~= nil then
+    if ev.bisFired ~= nil and not disp.bisShown and inBisWindow(src:date(ev.bisFired.bar)) then
         if st.day.isFrd and ev.bisFired.dir == "down" then
             safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS down ✓")
+            disp.bisShown = true
         elseif st.day.isFgd and ev.bisFired.dir == "up" then
             safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS up ✓")
+            disp.bisShown = true
         end
     end
 
@@ -289,7 +310,7 @@ local function render(period, canRender)
         disp.targetShown = true
     end
 
-    if instance.parameters.debug then
+    if false and instance.parameters.debug then
         local debugText = "DBG con=" .. (con.active and "1" or "0") ..
             " id=" .. (con.id or 0) ..
             " low=" .. string.format("%.5f", con.low or 0) ..
