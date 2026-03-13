@@ -227,19 +227,23 @@ local function render(period, canRender)
     local offset = range > 0 and range * 0.2 or src:pipSize() * 8
 
     if ev.consolidationCreated ~= nil then
-        safeTextSet(O.txtConsolidation, ev.consolidationCreated.bar, ev.consolidationCreated.low - offset, "Consolidation")
+        safeTextSet(O.txtConsolidation, ev.consolidationCreated.bar, ev.consolidationCreated.low - offset, "CONS ✓")
     end
 
     if ev.bisFired ~= nil then
-        safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS")
+        if st.day.isFrd then
+            safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS down ✓")
+        elseif st.day.isFgd then
+            safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS up ✓")
+        end
     end
 
-    if ev.sessionHighUpdated ~= nil then
-        safeTextSet(O.txtSessionHigh, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "Session High")
+    if ev.sessionHighUpdated ~= nil and st.day.isFrd then
+        safeTextSet(O.txtSessionHigh, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "HOS/HOD ✓")
     end
 
-    if ev.sessionLowUpdated ~= nil then
-        safeTextSet(O.txtSessionLow, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "Session Low")
+    if ev.sessionLowUpdated ~= nil and st.day.isFgd then
+        safeTextSet(O.txtSessionLow, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "LOS/LOD ✓")
     end
 
     if instance.parameters.debug then
