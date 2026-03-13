@@ -276,59 +276,13 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 
 ## 11) Structure Engine（本輪更新：SB_Structure_Engine.lua）
 
-### 責任定義（Structure only）
-- swing high / swing low 辨識
-- BOS up / BOS down 辨識
-- CHoCH up / CHoCH down 辨識
-- trend state 維護
-- 依 DayType gate（Trade Day + Bias Match）過濾有效 structure
-
-### Structure SSOT
-`state.structure` 單一真實來源：
-- trend
-- lastSwingHigh / lastSwingLow
-- prevSwingHigh / prevSwingLow
-- bosUp / bosDown
-- chochUp / chochDown
-- structureQualified
-
-顯示層（stream/text）只讀上述 SSOT，不再額外建立「決定行為」的隱藏狀態。
-
-### 參數預設（掛上即用）
-- BOS Left = 2
-- BOS Right = 2
-- Use Close For BOS = Yes
-- Enable CHoCH = Yes
-- Require Trade Day = Yes
-- Require Bias Match = Yes
-- Ignore Counter Bias Break = Yes
-- Show Swing Levels = Yes
-- Show BOS Text = Yes
-- Show CHoCH Text = Yes
-- Show Trend Text = Yes
-- Debug = No
-
-### 顯示方式（FXCM 可見）
-- Swing levels：`lastSwingHigh` / `lastSwingLow` line stream
-- BOS/CHoCH/TREND：採 `instance:createTextOutput(...)` + `TextOutput:set(...)`
-- BOS↑：事件 bar 上方
-- BOS↓：事件 bar 下方
-- CHoCH↑：事件 bar 上方
-- CHoCH↓：事件 bar 下方
-- TREND UP/DOWN：最新 bar 附近（上/下方）
-
-### 可驗證結果
-- 掛上 `SB_Structure_Engine.lua` 後，不需手動調參即可直接顯示 swing level + BOS/CHoCH/TREND 文字。
-- 文字會綁定事件 bar 價格附近，不會固定擠在左上角。
-
-## 2026-03-13 結構引擎（Structure Engine）正式輸出收斂
-
-`SB_Structure_Engine.lua` 已改為只輸出三種正式資訊（且必須經過 trade-day gate）：
+### 正式規格（唯一生效 / SSOT）
+`SB_Structure_Engine.lua` 目前正式輸出僅有以下內容，且一律受 trade-day gate 控制：
 1. `Consolidation`
 2. `BIS`（只限向下跌破 consolidation low）
 3. `Session High / Session Low`
 
-### Structure Engine 責任邊界（本輪）
+### 正式責任邊界（唯一生效）
 - Structure 不再輸出 `BOS/CHoCH/swing/trend/bias` 等正式文字。
 - Structure 不自行重建 Trade Day；改由上游輸入（stub/interface）：
   - `upstreamistradeday`
@@ -336,6 +290,19 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
   - `upstreamisfgd`
   - `upstreambias`
 - 正式渲染統一走單一 gate：`canRenderStructure = isTradeDay`。
+
+### Legacy（歷史版本，已不再生效）
+> 以下 swing/BOS/CHoCH/trend 設計僅供歷史對照，**不屬於目前正式輸出**。
+
+- swing high / swing low 辨識
+- BOS up / BOS down 辨識
+- CHoCH up / CHoCH down 辨識
+- trend state 維護
+- 依 DayType gate（Trade Day + Bias Match）過濾有效 structure
+
+## 2026-03-13 結構引擎（Structure Engine）正式輸出收斂
+
+> 本段為 11) Structure Engine 正式規格的收斂紀錄與程式化細節；唯一生效規格以第 11 節為準。
 
 ### Consolidation 判定（程式化）
 - 建立最小 bars 視窗（預設 8）
