@@ -7,7 +7,7 @@ local PEN_RECT_LOW = 22
 local PEN_DAY_DIVIDER = 23
 local PEN_WEEKEND_DAY_DIVIDER = 24
 
-local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, dayMarks={}, lastFullAuditDayKey=nil, symmetryAudit=nil, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW, dayDividerPen=PEN_DAY_DIVIDER, weekendDayDividerPen=PEN_WEEKEND_DAY_DIVIDER, refreshThrottleMs=300, lastRefreshClockMs=0, lastRefreshDateKey=nil, inRefreshRequest=false}}
+local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, dayMarks={}, lastFullAuditDayKey=nil, symmetryAudit=nil, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW, dayDividerPen=PEN_DAY_DIVIDER, weekendDayDividerPen=PEN_WEEKEND_DAY_DIVIDER, refreshThrottleMs=300, lastRefreshClockMs=0, lastRefreshDateKey=nil, inRefreshRequest=false, pendingForcedRefresh=false, lastSeenDateKey=nil, lastSeenOhlcSig=nil}}
 local T = {}
 
 function Init()
@@ -83,10 +83,48 @@ local function debug_output(msg)
 end
 
 local function now_clock_millis()
+    local function normalize_time_ms(raw)
+        local n = tonumber(raw)
+        if n == nil then return nil end
+        if n > 1000000000000 then return math.floor(n) end
+        if n > 1000000000 then return math.floor(n * 1000) end
+        if n > 40000 and n < 80000 then
+            return math.floor((n - 25569) * 86400000)
+        end
+        if n > 1000000 then return math.floor(n * 1000) end
+        return nil
+    end
+
+    local platformNow = nil
+    if core ~= nil and core.host ~= nil then
+        platformNow = safe_value(core.host, "execute", "getServerTime")
+            or safe_value(core.host, "execute", "getHistoryServerTime")
+            or safe_value(core.host, "execute", "getTime")
+            or safe_value(core.host, "now")
+    end
+    if platformNow == nil and core ~= nil then
+        platformNow = safe_value(core, "now")
+    end
+
+    local normalized = normalize_time_ms(platformNow)
+    if normalized ~= nil then return normalized end
+
+    if type(os) == "table" and type(os.time) == "function" then
+        return math.floor(os.time() * 1000)
+    end
     if type(os) == "table" and type(os.clock) == "function" then
         return math.floor(os.clock() * 1000)
     end
     return 0
+end
+
+local function day_ohlc_signature(dayRecord)
+    if dayRecord == nil then return nil end
+    local o = tonumber(dayRecord.eventOpen) or 0
+    local h = tonumber(dayRecord.eventHigh) or 0
+    local l = tonumber(dayRecord.eventLow) or 0
+    local c = tonumber(dayRecord.eventClose) or 0
+    return string.format("%.10f|%.10f|%.10f|%.10f", o, h, l, c)
 end
 
 local function request_owner_draw_refresh(period, dayRecord)
@@ -103,10 +141,20 @@ local function request_owner_draw_refresh(period, dayRecord)
     local d = dayRecord
     local isNewDay = IsNewTradingDay(period)
     local dayChanged = d ~= nil and d.dateKey ~= nil and d.dateKey ~= S.draw.lastRefreshDateKey
+    local currDateKey = d ~= nil and d.dateKey or nil
+    local currOhlcSig = day_ohlc_signature(d)
+    local sameSeenDay = currDateKey ~= nil and currDateKey == S.draw.lastSeenDateKey
+    local dayRecalculated = sameSeenDay and currOhlcSig ~= nil and currOhlcSig ~= S.draw.lastSeenOhlcSig
+
+    S.draw.lastSeenDateKey = currDateKey
+    S.draw.lastSeenOhlcSig = currOhlcSig
+
     local nowMs = now_clock_millis()
     local throttleMs = tonumber(S.draw.refreshThrottleMs) or 300
     local throttledReady = (nowMs - (S.draw.lastRefreshClockMs or 0)) >= throttleMs
-    if not isNewDay and not dayChanged and not throttledReady then return end
+    local eventDriven = isNewDay or dayChanged or dayRecalculated
+    local forceRetry = S.draw.pendingForcedRefresh == true
+    if not eventDriven and not forceRetry and not throttledReady then return end
 
     -- ownerDrawn refresh: owner-drawn labels rely on Draw(), so Update() should proactively request repaint/invalidate.
     local requested = false
@@ -123,14 +171,24 @@ local function request_owner_draw_refresh(period, dayRecord)
 
     S.draw.inRefreshRequest = false
 
+    if eventDriven and not requested then
+        S.draw.pendingForcedRefresh = true
+    elseif requested then
+        S.draw.pendingForcedRefresh = false
+    end
+
     if requested then
         S.draw.lastRefreshClockMs = nowMs
         if d ~= nil then
             S.draw.lastRefreshDateKey = d.dateKey
         end
         if instance.parameters.debug then
-            debug_output("refresh requested (invalidate/repaint)")
+            debug_output(string.format("refresh requested (invalidate/repaint) isNewDay=%s dayChanged=%s dayRecalculated=%s throttledReady=%s requested=%s forceRetry=%s",
+                tostring(isNewDay), tostring(dayChanged), tostring(dayRecalculated), tostring(throttledReady), tostring(requested), tostring(forceRetry)))
         end
+    elseif instance.parameters.debug then
+        debug_output(string.format("refresh deferred/fallback isNewDay=%s dayChanged=%s dayRecalculated=%s throttledReady=%s requested=%s forceRetry=%s",
+            tostring(isNewDay), tostring(dayChanged), tostring(dayRecalculated), tostring(throttledReady), tostring(requested), tostring(forceRetry)))
     end
 end
 
