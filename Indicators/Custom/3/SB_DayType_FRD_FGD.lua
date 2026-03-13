@@ -1167,6 +1167,8 @@ function Draw(stage, context)
     end
 end
 
+end
+
 function Update(period, mode)
     if S.source == nil or S.d1 == nil or S.m15 == nil or period < S.first then return end
 
