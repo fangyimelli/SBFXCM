@@ -119,6 +119,14 @@ local function request_owner_draw_refresh(period, dayRecord)
     local d = dayRecord
     local isNewDay = IsNewTradingDay(period)
     local dayChanged = d ~= nil and d.dateKey ~= nil and d.dateKey ~= S.draw.lastRefreshDateKey
+    local currDateKey = d ~= nil and d.dateKey or nil
+    local currOhlcSig = day_ohlc_signature(d)
+    local sameSeenDay = currDateKey ~= nil and currDateKey == S.draw.lastSeenDateKey
+    local dayRecalculated = sameSeenDay and currOhlcSig ~= nil and currOhlcSig ~= S.draw.lastSeenOhlcSig
+
+    S.draw.lastSeenDateKey = currDateKey
+    S.draw.lastSeenOhlcSig = currOhlcSig
+
     local nowMs = now_clock_millis()
     local throttleMs = tonumber(S.draw.refreshThrottleMs) or 300
     local throttledReady = (nowMs - (S.draw.lastRefreshClockMs or 0)) >= throttleMs
@@ -139,6 +147,12 @@ local function request_owner_draw_refresh(period, dayRecord)
     end
 
     S.draw.inRefreshRequest = false
+
+    if eventDriven and not requested then
+        S.draw.pendingForcedRefresh = true
+    elseif requested then
+        S.draw.pendingForcedRefresh = false
+    end
 
     if requested then
         S.draw.lastRefreshClockMs = nowMs
