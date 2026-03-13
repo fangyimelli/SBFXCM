@@ -136,6 +136,8 @@ local function get_day_mark_by_idx(day_idx)
     return S.dayMarks[dateKey]
 end
 
+local build_day_record
+
 local function get_or_build_day_mark(day_idx)
     if day_idx == nil then return nil end
     local rec = get_day_mark_by_idx(day_idx)
@@ -753,7 +755,7 @@ local function eval_rectangle(d1, m15, d1_idx)
     }
 end
 
-local function build_day_record(day_idx)
+build_day_record = function(day_idx)
     if day_idx == nil or day_idx <= S.d1:first() + 1 then return nil end
     if S.day_cache[day_idx] ~= nil then return S.day_cache[day_idx] end
 
