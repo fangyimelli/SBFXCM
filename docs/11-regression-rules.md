@@ -61,3 +61,8 @@
    - 回歸規則：`indicator:*` 與 `indicator.parameters:*` 僅允許出現在 `Init()`。
    - 驗證方式：靜態掃描 `SB_Full_Manual_Workflow_FXCM.lua`，確認 `Init()` 外無 `indicator.` 呼叫。
    - 預期結果：無 `attempt to index global 'indicator' (a nil value)`。
+
+12. **RG-012 | DayType 當日快取凍結造成 FRD/FGD 不更新或消失**
+   - 回歸規則：`SB_DayType_FRD_FGD.lua` 對「目前最後一根 D1」不得使用永久快取；當日 OHLC 或 ts 有變動必須重算 day record，並可觸發 owner-draw 刷新。
+   - 驗證方式：在同一交易日內觀察 D1 尚未收線期間，確認 `is_frd_event_day/is_fgd_event_day/day_type_code` 與圖上標籤會隨當日價格變動更新；切換 `debug=true` 檢查 refresh log 內 `force=true` 路徑。
+   - 預期結果：不再出現「整天不更新」或「標籤突然消失且不回來」的行為；當日變動可在 stream 與 owner-draw 一致反映。
