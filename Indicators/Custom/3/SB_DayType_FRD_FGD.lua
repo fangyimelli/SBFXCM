@@ -136,6 +136,13 @@ local function get_day_mark_by_idx(day_idx)
     return S.dayMarks[dateKey]
 end
 
+local function get_or_build_day_mark(day_idx)
+    if day_idx == nil then return nil end
+    local rec = get_day_mark_by_idx(day_idx)
+    if rec ~= nil then return rec end
+    return build_day_record(day_idx)
+end
+
 local function build_audit_lines(day_idx, dayRecord)
     local rec = dayRecord or get_day_mark_by_idx(day_idx)
     if rec == nil then return {} end
@@ -1025,7 +1032,7 @@ function Draw(stage, context)
     for period = from, to do
         if IsNewTradingDay(period) then
             local d1_idx = find_history_index_by_time(S.d1, S.source:date(period))
-            local d = get_day_mark_by_idx(d1_idx)
+            local d = get_or_build_day_mark(d1_idx)
             if d ~= nil then
                 if instance.parameters.debug then
                     debug_output(string.format("draw fetch date=%s source=SSOT", tostring(d.dateKey)))
