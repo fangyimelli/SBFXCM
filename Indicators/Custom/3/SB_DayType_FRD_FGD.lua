@@ -5,8 +5,9 @@ local PEN_NEUTRAL = 20
 local PEN_RECT_HIGH = 21
 local PEN_RECT_LOW = 22
 local PEN_DAY_DIVIDER = 23
+local PEN_WEEKEND_DAY_DIVIDER = 24
 
-local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, dayMarks={}, lastFullAuditDayKey=nil, symmetryAudit=nil, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW, dayDividerPen=PEN_DAY_DIVIDER, refreshThrottleMs=300, lastRefreshClockMs=0, lastRefreshDateKey=nil, inRefreshRequest=false}}
+local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, dayMarks={}, lastFullAuditDayKey=nil, symmetryAudit=nil, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW, dayDividerPen=PEN_DAY_DIVIDER, weekendDayDividerPen=PEN_WEEKEND_DAY_DIVIDER, refreshThrottleMs=300, lastRefreshClockMs=0, lastRefreshDateKey=nil, inRefreshRequest=false}}
 local T = {}
 
 function Init()
@@ -52,6 +53,8 @@ function Init()
     indicator.parameters:addBoolean("ShowDayDivider", "Show Day Divider", "", true)
     indicator.parameters:addColor("DayDividerColor", "Day Divider Color", "", core.rgb(120, 120, 120))
     indicator.parameters:addInteger("DayDividerWidth", "Day Divider Width", "", 1)
+    indicator.parameters:addColor("WeekendDayDividerColor", "Weekend Day Divider Color", "", core.rgb(90, 90, 90))
+    indicator.parameters:addInteger("WeekendDayDividerWidth", "Weekend Day Divider Width", "", 1)
     indicator.parameters:addBoolean("debug", "Debug", "", false)
 end
 
@@ -692,6 +695,8 @@ local function ensure_draw_resources(context)
     local penWidth = safe_value(context, "pointsToPixels", 1) or 1
     local dayDividerWidth = clamp_positive(instance.parameters.DayDividerWidth, 1)
     local dayDividerPenWidth = safe_value(context, "pointsToPixels", dayDividerWidth) or dayDividerWidth
+    local weekendDividerWidth = clamp_positive(instance.parameters.WeekendDayDividerWidth, dayDividerWidth)
+    local weekendDividerPenWidth = safe_value(context, "pointsToPixels", weekendDividerWidth) or weekendDividerWidth
     local solidStyle = safe_value(context, "convertPenStyle", core.LINE_SOLID) or core.LINE_SOLID
 
     local okWeekdayFont = safe_method(context, "createFont", FONT_WEEKDAY, "Arial", weekdayPx, weekdayPx, 0)
@@ -702,11 +707,18 @@ local function ensure_draw_resources(context)
     local okRectHighPen = safe_method(context, "createPen", PEN_RECT_HIGH, solidStyle, penWidth, instance.parameters.RectangleHighDebugColor)
     local okRectLowPen = safe_method(context, "createPen", PEN_RECT_LOW, solidStyle, penWidth, instance.parameters.RectangleLowDebugColor)
     local okDayDividerPen = safe_method(context, "createPen", PEN_DAY_DIVIDER, solidStyle, dayDividerPenWidth, instance.parameters.DayDividerColor)
+    local okWeekendDayDividerPen = safe_method(context, "createPen", PEN_WEEKEND_DAY_DIVIDER, solidStyle, weekendDividerPenWidth, instance.parameters.WeekendDayDividerColor)
 
     if okDayDividerPen then
         S.draw.dayDividerPen = PEN_DAY_DIVIDER
     else
         S.draw.dayDividerPen = S.draw.neutralPen
+    end
+
+    if okWeekendDayDividerPen then
+        S.draw.weekendDayDividerPen = PEN_WEEKEND_DAY_DIVIDER
+    else
+        S.draw.weekendDayDividerPen = S.draw.dayDividerPen
     end
 
     local fontsReady = okWeekdayFont and okDayTypeFont and okDebugFont
@@ -724,6 +736,20 @@ local function ensure_draw_resources(context)
     if not okDayDividerPen then
         debug_output("day divider pen init failed, fallback to neutral pen")
     end
+    if not okWeekendDayDividerPen then
+        debug_output("weekend day divider pen init failed, fallback to day divider pen")
+    end
+end
+
+local function is_weekend_ts(ts)
+    if ts == nil then return false end
+    if core ~= nil and type(core.dateToTable) == "function" then
+        local ok, t = pcall(core.dateToTable, ts)
+        if ok and type(t) == "table" and t.wday ~= nil then
+            return t.wday == 1 or t.wday == 7
+        end
+    end
+    return false
 end
 
 local function getHistory(instrument, tf, isBid)
@@ -1180,7 +1206,8 @@ function Draw(stage, context)
                         local dividerX = x - 1
                         local topY = safe_value(context, "top")
                         local bottomY = safe_value(context, "bottom")
-                        draw_line(context, S.draw.dayDividerPen or S.draw.neutralPen, dividerX, topY, dividerX, bottomY)
+                        local dividerPen = is_weekend_ts(S.source:date(period)) and (S.draw.weekendDayDividerPen or S.draw.dayDividerPen) or S.draw.dayDividerPen
+                        draw_line(context, dividerPen or S.draw.neutralPen, dividerX, topY, dividerX, bottomY)
                     end
 
                     local y1 = top + baseYOffset
