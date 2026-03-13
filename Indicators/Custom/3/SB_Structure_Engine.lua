@@ -15,8 +15,10 @@ local S = {
             high = nil,
             low = nil,
             startBar = nil,
+            endBar = nil,
             lastInsideBar = nil,
-            brokenDown = false
+            brokenDown = false,
+            brokenUp = false
         },
         session = {
             active = false,
@@ -31,6 +33,16 @@ local S = {
             sessionHighUpdated = nil,
             sessionLowUpdated = nil,
             lastBisConsolidationId = nil
+        },
+        display = {
+            setupId = nil,
+            consShown = false,
+            bisShown = false,
+            targetShown = false,
+            consStartBar = nil,
+            consEndBar = nil,
+            consHigh = nil,
+            consLow = nil
         }
     }
 }
@@ -125,19 +137,26 @@ local function detectConsolidation(period, canRender)
 
         if stillInside then
             con.lastInsideBar = period
+            con.endBar = period
         elseif brokeUp then
-            con.active = false
+            if ev.lastBisConsolidationId ~= con.id then
+                con.brokenUp = true
+                con.active = false
+                ev.bisFired = { id = con.id, bar = period, price = src.high[period], sourceHigh = con.high, dir = "up" }
+                ev.lastBisConsolidationId = con.id
+            end
         elseif brokeDown then
             if ev.lastBisConsolidationId ~= con.id then
                 con.brokenDown = true
                 con.active = false
-                ev.bisFired = { id = con.id, bar = period, price = src.low[period], sourceLow = con.low }
+                ev.bisFired = { id = con.id, bar = period, price = src.low[period], sourceLow = con.low, dir = "down" }
                 ev.lastBisConsolidationId = con.id
             end
         elseif candidate ~= nil then
             con.high = candidate.high
             con.low = candidate.low
             con.lastInsideBar = period
+            con.endBar = period
         elseif period - con.lastInsideBar > math.max(1, instance.parameters.consolidationstalebars) then
             con.active = false
         end
@@ -150,14 +169,17 @@ local function detectConsolidation(period, canRender)
         con.high = candidate.high
         con.low = candidate.low
         con.startBar = candidate.startBar
+        con.endBar = candidate.endBar
         con.lastInsideBar = period
         con.brokenDown = false
+        con.brokenUp = false
         ev.consolidationCreated = {
             id = con.id,
             bar = period,
             high = con.high,
             low = con.low,
-            startBar = con.startBar
+            startBar = con.startBar,
+            endBar = con.endBar
         }
     end
 end
@@ -202,6 +224,8 @@ local function render(period, canRender)
     local con = st.consolidation
     local sess = st.session
     local ev = st.events
+    local disp = st.display
+    local isConfirmedTradeDay = st.day.isFrd or st.day.isFgd
 
     T.consolidationHigh[period] = nil
     T.consolidationLow[period] = nil
@@ -213,9 +237,26 @@ local function render(period, canRender)
         return
     end
 
-    if con.active then
-        T.consolidationHigh[period] = con.high
-        T.consolidationLow[period] = con.low
+    if not isConfirmedTradeDay then
+        return
+    end
+
+    if ev.consolidationCreated ~= nil then
+        if disp.setupId ~= ev.consolidationCreated.id then
+            disp.setupId = ev.consolidationCreated.id
+            disp.consShown = false
+            disp.bisShown = false
+            disp.targetShown = false
+        end
+        disp.consStartBar = ev.consolidationCreated.startBar
+        disp.consEndBar = ev.consolidationCreated.endBar or ev.consolidationCreated.bar
+        disp.consHigh = ev.consolidationCreated.high
+        disp.consLow = ev.consolidationCreated.low
+    end
+
+    if disp.consStartBar ~= nil and disp.consEndBar ~= nil and disp.consHigh ~= nil and disp.consLow ~= nil and period >= disp.consStartBar and period <= disp.consEndBar then
+        T.consolidationHigh[period] = disp.consHigh
+        T.consolidationLow[period] = disp.consLow
     end
 
     if sess.active then
@@ -226,20 +267,29 @@ local function render(period, canRender)
     local range = src.high[period] - src.low[period]
     local offset = range > 0 and range * 0.2 or src:pipSize() * 8
 
-    if ev.consolidationCreated ~= nil then
-        safeTextSet(O.txtConsolidation, ev.consolidationCreated.bar, ev.consolidationCreated.low - offset, "Consolidation")
+    if ev.consolidationCreated ~= nil and not disp.consShown then
+        safeTextSet(O.txtConsolidation, ev.consolidationCreated.bar, ev.consolidationCreated.low - offset, "CONS ✓")
+        disp.consShown = true
     end
 
-    if ev.bisFired ~= nil then
-        safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS")
+    if ev.bisFired ~= nil and not disp.bisShown then
+        if st.day.isFrd and ev.bisFired.dir == "down" then
+            safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS down ✓")
+            disp.bisShown = true
+        elseif st.day.isFgd and ev.bisFired.dir == "up" then
+            safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price + offset, "BIS up ✓")
+            disp.bisShown = true
+        end
     end
 
-    if ev.sessionHighUpdated ~= nil then
-        safeTextSet(O.txtSessionHigh, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "Session High")
+    if st.day.isFrd and ev.sessionHighUpdated ~= nil and not disp.targetShown then
+        safeTextSet(O.txtSessionHigh, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "HOS/HOD ✓")
+        disp.targetShown = true
     end
 
-    if ev.sessionLowUpdated ~= nil then
-        safeTextSet(O.txtSessionLow, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "Session Low")
+    if st.day.isFgd and ev.sessionLowUpdated ~= nil and not disp.targetShown then
+        safeTextSet(O.txtSessionLow, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "LOS/LOD ✓")
+        disp.targetShown = true
     end
 
     if instance.parameters.debug then
