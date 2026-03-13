@@ -140,7 +140,6 @@ local function detectConsolidation(period, canRender)
             con.endBar = period
         elseif brokeUp then
             if ev.lastBisConsolidationId ~= con.id then
-                con.brokenUp = true
                 con.active = false
                 ev.bisFired = { id = con.id, bar = period, price = src.high[period], sourceHigh = con.high, dir = "up" }
                 ev.lastBisConsolidationId = con.id
@@ -272,13 +271,11 @@ local function render(period, canRender)
         disp.consShown = true
     end
 
-    if ev.bisFired ~= nil and not disp.bisShown then
+    if ev.bisFired ~= nil then
         if st.day.isFrd and ev.bisFired.dir == "down" then
             safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS down ✓")
-            disp.bisShown = true
         elseif st.day.isFgd and ev.bisFired.dir == "up" then
-            safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price + offset, "BIS up ✓")
-            disp.bisShown = true
+            safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS up ✓")
         end
     end
 
