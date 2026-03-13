@@ -1,6 +1,13 @@
 local S = {
     source = nil,
     first = nil,
+    upstream = {
+        tradeDay = nil,
+        frdEvent = nil,
+        fgdEvent = nil,
+        dayBias = nil,
+        warnedMissing = false
+    },
     state = {
         day = {
             isTradeDay = false,
@@ -49,6 +56,16 @@ local S = {
 
 local T = {}
 local O = {}
+
+local function debugLog(msg)
+    if not instance.parameters.debug then return end
+    local ok = pcall(function()
+        core.host:trace("[SB_Structure_Engine] " .. msg)
+    end)
+    if not ok then
+        pcall(function() print("[SB_Structure_Engine] " .. msg) end)
+    end
+end
 
 local function safeTextSet(out, period, price, text)
     if out == nil or period == nil or price == nil or text == nil then return end
@@ -332,6 +349,12 @@ function Init()
     indicator.parameters:addDouble("maxdriftratio", "Max Consolidation Drift Ratio", "", 0.45)
 
     indicator.parameters:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
+    indicator.parameters:addBoolean("manualoverride", "Manual Override DayType (Debug)", "", false)
+    indicator.parameters:addSource("daytype_trade_day_stream", "DayType Stream: is_trade_day", "", "close")
+    indicator.parameters:addSource("daytype_frd_event_stream", "DayType Stream: is_frd_event_day", "", "close")
+    indicator.parameters:addSource("daytype_fgd_event_stream", "DayType Stream: is_fgd_event_day", "", "close")
+    indicator.parameters:addSource("daytype_bias_stream", "DayType Stream: day_bias", "", "close")
+
     indicator.parameters:addBoolean("upstreamistradeday", "Upstream Is Trade Day", "", false)
     indicator.parameters:addBoolean("upstreamisfrd", "Upstream Is FRD", "", false)
     indicator.parameters:addBoolean("upstreamisfgd", "Upstream Is FGD", "", false)
@@ -346,6 +369,23 @@ function Prepare(nameOnly)
 
     instance:name(profile:id() .. "(" .. S.source:name() .. ")")
     if nameOnly then return end
+
+    S.upstream.tradeDay = instance.parameters.daytype_trade_day_stream
+    S.upstream.frdEvent = instance.parameters.daytype_frd_event_stream
+    S.upstream.fgdEvent = instance.parameters.daytype_fgd_event_stream
+    S.upstream.dayBias = instance.parameters.daytype_bias_stream
+
+    local missing = {}
+    if S.upstream.tradeDay == nil then table.insert(missing, "is_trade_day") end
+    if S.upstream.frdEvent == nil then table.insert(missing, "is_frd_event_day") end
+    if S.upstream.fgdEvent == nil then table.insert(missing, "is_fgd_event_day") end
+    if S.upstream.dayBias == nil then table.insert(missing, "day_bias") end
+    if #missing > 0 then
+        debugLog("DayType upstream streams not ready: " .. table.concat(missing, ", ") .. ". Enable manual override for fallback debugging.")
+        S.upstream.warnedMissing = true
+    else
+        debugLog("DayType upstream streams connected: is_trade_day/is_frd_event_day/is_fgd_event_day/day_bias")
+    end
 
     T.consolidationHigh = instance:addStream("consolidation_high", core.Line, "Consolidation High", "", core.rgb(205, 205, 205), S.first)
     T.consolidationLow = instance:addStream("consolidation_low", core.Line, "Consolidation Low", "", core.rgb(205, 205, 205), S.first)
@@ -366,10 +406,31 @@ function Update(period, mode)
     local st = S.state
     clearEvents(st.events)
 
-    st.day.isTradeDay = instance.parameters.upstreamistradeday
-    st.day.isFrd = instance.parameters.upstreamisfrd
-    st.day.isFgd = instance.parameters.upstreamisfgd
-    st.day.bias = instance.parameters.upstreambias
+    if instance.parameters.manualoverride then
+        st.day.isTradeDay = instance.parameters.upstreamistradeday
+        st.day.isFrd = instance.parameters.upstreamisfrd
+        st.day.isFgd = instance.parameters.upstreamisfgd
+        st.day.bias = instance.parameters.upstreambias
+    else
+        local up = S.upstream
+        local hasUpstream = up.tradeDay ~= nil and up.frdEvent ~= nil and up.fgdEvent ~= nil and up.dayBias ~= nil
+
+        if hasUpstream then
+            st.day.isTradeDay = (up.tradeDay[period] or 0) > 0
+            st.day.isFrd = (up.frdEvent[period] or 0) > 0
+            st.day.isFgd = (up.fgdEvent[period] or 0) > 0
+            st.day.bias = math.floor((up.dayBias[period] or 0) + 0.000001)
+        else
+            st.day.isTradeDay = false
+            st.day.isFrd = false
+            st.day.isFgd = false
+            st.day.bias = 0
+            if not up.warnedMissing then
+                debugLog("Missing DayType upstream streams in Update(). Structure stays gated off until streams are connected or manual override is enabled.")
+                up.warnedMissing = true
+            end
+        end
+    end
 
     local canRenderStructure = (not instance.parameters.requiretradeday) or st.day.isTradeDay
 

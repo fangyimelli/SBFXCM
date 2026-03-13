@@ -183,7 +183,7 @@ HUD 只做文字化狀態展示：
 - DayType SSOT（Pump/Dump/FRD/FGD/Trade Day + bias + rectangle 輸出）
 - DayType label（FRD/FGD/Trade Day）
 - rectangle debug 線框與 stream
-- Structure consume DayType 並輸出 structure stream
+- Structure 以 DayType 四個輸出 stream 直接串接（`is_trade_day` / `is_frd_event_day` / `is_fgd_event_day` / `day_bias`）並輸出 structure stream
 - Entry 的 FRD/FGD trade-day EMA20 entry 規則
 - HUD 改為 display-only
 
@@ -330,11 +330,13 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 
 ### Structure Engine 責任邊界（本輪）
 - Structure 不再輸出 `BOS/CHoCH/swing/trend/bias` 等正式文字。
-- Structure 不自行重建 Trade Day；改由上游輸入（stub/interface）：
-  - `upstreamistradeday`
-  - `upstreamisfrd`
-  - `upstreamisfgd`
-  - `upstreambias`
+- Structure 不自行重建 Trade Day；改為直接 consume DayType output stream：
+  - `daytype_trade_day_stream`（接 `is_trade_day`）
+  - `daytype_frd_event_stream`（接 `is_frd_event_day`）
+  - `daytype_fgd_event_stream`（接 `is_fgd_event_day`）
+  - `daytype_bias_stream`（接 `day_bias`）
+- 預設主流程是 upstream stream；`manualoverride=true` 僅供除錯，才會使用手動參數：
+  - `upstreamistradeday` / `upstreamisfrd` / `upstreamisfgd` / `upstreambias`
 - 正式渲染統一走單一 gate：`canRenderStructure = isTradeDay`。
 
 ### Consolidation 判定（程式化）
