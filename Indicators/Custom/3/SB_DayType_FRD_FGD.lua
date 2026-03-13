@@ -5,7 +5,7 @@ local PEN_NEUTRAL = 20
 local PEN_RECT_HIGH = 21
 local PEN_RECT_LOW = 22
 
-local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, dayMarks={}, lastFullAuditDayKey=nil, symmetryAudit=nil, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW, refreshThrottleMs=300, lastRefreshClockMs=0, lastRefreshDateKey=nil}}
+local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, dayMarks={}, lastFullAuditDayKey=nil, symmetryAudit=nil, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW, refreshThrottleMs=300, lastRefreshClockMs=0, lastRefreshDateKey=nil, inRefreshRequest=false}}
 local T = {}
 
 function Init()
@@ -19,6 +19,7 @@ function Init()
     indicator.parameters:addDouble("max_rectangle_height_atr", "Max Rectangle Height ATR", "", 1.2)
     indicator.parameters:addDouble("atr_mult", "Pump/Dump ATR Mult", "", 1.0)
     indicator.parameters:addInteger("dayatrlen", "Day ATR Length", "", 14)
+    indicator.parameters:addInteger("analysislookbackdays", "Analysis Lookback Trading Days", "", 7)
     indicator.parameters:addBoolean("enablequality", "Enable Quality Filter", "", true)
     indicator.parameters:addDouble("impulseAtrMult", "Impulse ATR Mult", "", 1.3)
     indicator.parameters:addDouble("impulseCloseExtreme", "Impulse Close Extreme", "", 0.7)
@@ -83,6 +84,13 @@ local function request_owner_draw_refresh(period, dayRecord)
     if instance == nil or instance.parameters == nil then return end
     if not instance.parameters.debug and not instance.parameters.ShowDayTypeLabels then return end
 
+    if S.draw.inRefreshRequest then
+        if instance.parameters.debug then
+            debug_output("refresh skipped (reentrant)")
+        end
+        return
+    end
+
     local d = dayRecord
     local isNewDay = IsNewTradingDay(period)
     local dayChanged = d ~= nil and d.dateKey ~= nil and d.dateKey ~= S.draw.lastRefreshDateKey
@@ -93,9 +101,9 @@ local function request_owner_draw_refresh(period, dayRecord)
 
     -- ownerDrawn refresh: owner-drawn labels rely on Draw(), so Update() should proactively request repaint/invalidate.
     local requested = false
-    local ok = safe_method(instance, "updateFrom", period)
-    if ok then requested = true end
-    if not requested and core ~= nil and core.host ~= nil then
+    local ok = nil
+    S.draw.inRefreshRequest = true
+    if core ~= nil and core.host ~= nil then
         ok = safe_method(core.host, "execute", "invalidate")
         if ok then requested = true end
     end
@@ -104,10 +112,15 @@ local function request_owner_draw_refresh(period, dayRecord)
         if ok then requested = true end
     end
 
+    S.draw.inRefreshRequest = false
+
     if requested then
         S.draw.lastRefreshClockMs = nowMs
         if d ~= nil then
             S.draw.lastRefreshDateKey = d.dateKey
+        end
+        if instance.parameters.debug then
+            debug_output("refresh requested (invalidate/repaint)")
         end
     end
 end
@@ -116,6 +129,20 @@ local function clamp_positive(v, fallback)
     local n = tonumber(v)
     if n == nil or n <= 0 then return fallback end
     return math.floor(n)
+end
+
+local function get_analysis_first_day_idx()
+    if S.d1 == nil then return nil end
+    local lookback = math.max(1, clamp_positive(instance.parameters.analysislookbackdays, 7))
+    local last = S.d1:size() - 1
+    return math.max(S.d1:first() + 1, last - lookback + 1)
+end
+
+local function is_in_analysis_window(day_idx)
+    if day_idx == nil then return false end
+    local firstDayIdx = get_analysis_first_day_idx()
+    if firstDayIdx == nil then return false end
+    return day_idx >= firstDayIdx
 end
 
 local function weekday_label_from_ts(ts)
@@ -877,7 +904,7 @@ build_day_record = function(day_idx)
     local isFgdEvent = basicFgd
     local isFrdEvent = basicFrd
 
-    -- Layer D: Next Day Trade Day
+    -- Layer D: Next Trading Day Trade Day (D1 history already excludes weekend sessions)
     local prev_rec = (day_idx - 1 >= S.d1:first()) and build_day_record(day_idx - 1) or nil
     local prevWasEvent = prev_rec ~= nil and (prev_rec.basicFrd or prev_rec.basicFgd)
     local isTradeDay = (not isFrdEvent) and (not isFgdEvent) and prevWasEvent
@@ -1070,12 +1097,14 @@ function Draw(stage, context)
     local _, dayTypeMeasuredH = measure_text(context, S.draw.dayTypeFont, "Trade Day")
     local weekdayLineHeight = (weekdayMeasuredH or clamp_positive(instance.parameters.WeekdayFontSize, 10)) + linePadding
     local dayTypeLineHeight = (dayTypeMeasuredH or clamp_positive(instance.parameters.DayTypeFontSize, 10)) + linePadding
+    local analysisFirstDayIdx = get_analysis_first_day_idx()
 
     for period = from, to do
         if IsNewTradingDay(period) then
             local d1_idx = find_history_index_by_time(S.d1, S.source:date(period))
-            local d = get_or_build_day_mark(d1_idx)
-            if d ~= nil then
+            if d1_idx ~= nil and (analysisFirstDayIdx == nil or d1_idx >= analysisFirstDayIdx) then
+                local d = get_or_build_day_mark(d1_idx)
+                if d ~= nil then
                 if instance.parameters.debug then
                     debug_output(string.format("draw fetch date=%s source=SSOT", tostring(d.dateKey)))
                 end
@@ -1143,6 +1172,32 @@ function Update(period, mode)
 
     local d1_idx = find_history_index_by_time(S.d1, S.source:date(period))
     if d1_idx == nil or d1_idx <= S.d1:first() + 1 then return end
+
+    if not is_in_analysis_window(d1_idx) then
+        T.pump[period] = 0
+        T.dump[period] = 0
+        T.frdEvent[period] = 0
+        T.fgdEvent[period] = 0
+        T.frdTrade[period] = 0
+        T.fgdTrade[period] = 0
+        T.tradeDay[period] = 0
+        T.rectValid[period] = 0
+        T.rectHigh[period] = 0
+        T.rectLow[period] = 0
+        T.rectHeight[period] = 0
+        T.rectBars[period] = 0
+        T.rectStart[period] = 0
+        T.rectEnd[period] = 0
+        T.daytypeBias[period] = 0
+        T.dayBias[period] = 0
+        T.eventDayType[period] = 0
+        T.dayTypeCode[period] = 0
+        T.repeatedPumpScore[period] = 0
+        T.repeatedDumpScore[period] = 0
+        T.consolidationScore[period] = 0
+        T.threeLevelsScore[period] = 0
+        return
+    end
 
     build_day_record(d1_idx)
     if d1_idx - 1 >= S.d1:first() + 1 then
