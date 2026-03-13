@@ -1,231 +1,313 @@
-local okShared, shared = pcall(dofile, "Indicators/Custom/3/SB_Playbook_Shared.lua")
-if not okShared then shared = nil end
-
 local S = {
     source = nil,
     first = nil,
-    m15 = nil,
-    d1 = nil,
-    day_cache = {},
     state = {
-        structure = {
-            trend = "none",
-            lastSwingHigh = nil,
-            lastSwingLow = nil,
-            prevSwingHigh = nil,
-            prevSwingLow = nil,
-            bosUp = false,
-            bosDown = false,
-            chochUp = false,
-            chochDown = false,
-            structureQualified = false
+        day = {
+            isTradeDay = false,
+            isFrd = false,
+            isFgd = false,
+            bias = 0
+        },
+        consolidation = {
+            idSeed = 0,
+            active = false,
+            id = nil,
+            high = nil,
+            low = nil,
+            startBar = nil,
+            lastInsideBar = nil,
+            brokenDown = false
+        },
+        session = {
+            active = false,
+            sourceConsolidationId = nil,
+            startBar = nil,
+            high = nil,
+            low = nil
+        },
+        events = {
+            consolidationCreated = nil,
+            bisFired = nil,
+            sessionHighUpdated = nil,
+            sessionLowUpdated = nil,
+            lastBisConsolidationId = nil
         }
-    },
-    day = {
-        isTradeDay = false,
-        bias = 0
     }
 }
 
 local T = {}
 local O = {}
 
-function Init()
-    indicator:name("SB Structure Engine")
-    indicator:description("Structure-only SSOT engine (Swing/BOS/CHoCH/Trend) gated by DayType")
-    indicator:requiredSource(core.Bar)
-    indicator:type(core.Indicator)
-
-    indicator.parameters:addInteger("bosleft", "BOS Left", "", 2)
-    indicator.parameters:addInteger("bosright", "BOS Right", "", 2)
-    indicator.parameters:addBoolean("usecloseforbos", "Use Close For BOS", "", true)
-    indicator.parameters:addBoolean("enablechoch", "Enable CHoCH", "", true)
-    indicator.parameters:addBoolean("requiretradeday", "Require Trade Day", "", true)
-    indicator.parameters:addBoolean("requirebiasmatch", "Require Bias Match", "", true)
-    indicator.parameters:addBoolean("ignorecounterbiasbreak", "Ignore Counter Bias Break", "", true)
-    indicator.parameters:addBoolean("showswinglevels", "Show Swing Levels", "", true)
-    indicator.parameters:addBoolean("showbostext", "Show BOS Text", "", true)
-    indicator.parameters:addBoolean("showchochtext", "Show CHoCH Text", "", true)
-    indicator.parameters:addBoolean("showtrendtext", "Show Trend Text", "", true)
-    indicator.parameters:addBoolean("debug", "Debug", "", false)
-end
-
-local function getHistory(i, tf, b)
-    local ok, h = pcall(function() return core.host:execute("getSyncHistory", i, tf, b, 0, 0) end)
-    if ok then return h end
-    return nil
-end
-
-local function daytype(idx)
-    if shared == nil or S.d1 == nil or S.m15 == nil or idx == nil then return nil end
-    return shared.build_daytype_record(S.d1, S.m15, idx, {
-        rectangle_lookback_bars = 8,
-        rectangle_min_contained_closes = 6,
-        max_rectangle_height_atr = 1.2,
-        dayatrlen = 14
-    }, S.day_cache)
-end
-
-local function mapTrendToCode(trend)
-    if trend == "up" then return 1 end
-    if trend == "down" then return -1 end
-    return 0
-end
-
-local function isBiasMatch(dayBias, trend)
-    if dayBias == nil or trend == "none" then return false end
-    if dayBias > 0 then return trend == "up" end
-    if dayBias < 0 then return trend == "down" end
-    return false
-end
-
-local function pivotHigh(stream, p, l, r)
-    if stream == nil or p == nil then return nil end
-    if p < stream:first() + l or p + r > stream:size() - 1 then return nil end
-    local v = stream.high[p]
-    for i = p - l, p + r do
-        if i ~= p and stream.high[i] >= v then return nil end
-    end
-    return v
-end
-
-local function pivotLow(stream, p, l, r)
-    if stream == nil or p == nil then return nil end
-    if p < stream:first() + l or p + r > stream:size() - 1 then return nil end
-    local v = stream.low[p]
-    for i = p - l, p + r do
-        if i ~= p and stream.low[i] <= v then return nil end
-    end
-    return v
-end
-
 local function safeTextSet(out, period, price, text)
     if out == nil or period == nil or price == nil or text == nil then return end
     out:set(period, price, text)
 end
 
+local function clearEvents(ev)
+    ev.consolidationCreated = nil
+    ev.bisFired = nil
+    ev.sessionHighUpdated = nil
+    ev.sessionLowUpdated = nil
+end
+
+local function computeATR(stream, period, len)
+    if stream == nil or period == nil or len == nil or len <= 0 then return nil end
+    local start = period - len + 1
+    if start < stream:first() then return nil end
+
+    local sumTr = 0
+    local count = 0
+    for i = start, period do
+        local prevClose = (i > stream:first()) and stream.close[i - 1] or stream.close[i]
+        if prevClose ~= nil then
+            local tr = math.max(stream.high[i] - stream.low[i], math.abs(stream.high[i] - prevClose), math.abs(stream.low[i] - prevClose))
+            sumTr = sumTr + tr
+            count = count + 1
+        end
+    end
+    if count == 0 then return nil end
+    return sumTr / count
+end
+
+local function findConsolidationCandidate(stream, period, minBars, atrLen, maxAtrMult, trendLimit)
+    if stream == nil or period == nil then return nil end
+    local start = period - minBars + 1
+    if start < stream:first() then return nil end
+
+    local high = stream.high[start]
+    local low = stream.low[start]
+    for i = start + 1, period do
+        if stream.high[i] > high then high = stream.high[i] end
+        if stream.low[i] < low then low = stream.low[i] end
+    end
+
+    local range = high - low
+    local atr = computeATR(stream, period, atrLen)
+    if atr == nil or range <= 0 then return nil end
+    if range > atr * maxAtrMult then return nil end
+
+    local drift = math.abs(stream.close[period] - stream.close[start])
+    if drift > (range * trendLimit) then return nil end
+
+    return {
+        high = high,
+        low = low,
+        startBar = start,
+        endBar = period,
+        bars = minBars,
+        atr = atr,
+        range = range
+    }
+end
+
+local function detectConsolidation(period, canRender)
+    local st = S.state
+    local con = st.consolidation
+    local ev = st.events
+    local src = S.source
+
+    if not canRender then
+        con.active = false
+        return
+    end
+
+    local minBars = math.max(3, instance.parameters.consolidationminbars)
+    local atrLen = math.max(2, instance.parameters.atrlen)
+    local maxAtrMult = math.max(0.1, instance.parameters.maxconsolidationatrmult)
+    local trendLimit = math.max(0.05, math.min(1.0, instance.parameters.maxdriftratio))
+
+    local candidate = findConsolidationCandidate(src, period, minBars, atrLen, maxAtrMult, trendLimit)
+
+    if con.active and not con.brokenDown then
+        local brokeUp = src.close[period] > con.high
+        local brokeDown = src.close[period] < con.low
+        local stillInside = src.high[period] <= con.high and src.low[period] >= con.low
+
+        if stillInside then
+            con.lastInsideBar = period
+        elseif brokeUp then
+            con.active = false
+        elseif brokeDown then
+            if ev.lastBisConsolidationId ~= con.id then
+                con.brokenDown = true
+                con.active = false
+                ev.bisFired = { id = con.id, bar = period, price = src.low[period], sourceLow = con.low }
+                ev.lastBisConsolidationId = con.id
+            end
+        elseif candidate ~= nil then
+            con.high = candidate.high
+            con.low = candidate.low
+            con.lastInsideBar = period
+        elseif period - con.lastInsideBar > math.max(1, instance.parameters.consolidationstalebars) then
+            con.active = false
+        end
+    end
+
+    if (not con.active) and candidate ~= nil then
+        con.idSeed = con.idSeed + 1
+        con.active = true
+        con.id = con.idSeed
+        con.high = candidate.high
+        con.low = candidate.low
+        con.startBar = candidate.startBar
+        con.lastInsideBar = period
+        con.brokenDown = false
+        ev.consolidationCreated = {
+            id = con.id,
+            bar = period,
+            high = con.high,
+            low = con.low,
+            startBar = con.startBar
+        }
+    end
+end
+
+local function updateSession(period, canRender)
+    local st = S.state
+    local sess = st.session
+    local ev = st.events
+    local src = S.source
+
+    if not canRender then
+        sess.active = false
+        return
+    end
+
+    if ev.bisFired ~= nil then
+        sess.active = true
+        sess.sourceConsolidationId = ev.bisFired.id
+        sess.startBar = period
+        sess.high = src.high[period]
+        sess.low = src.low[period]
+        ev.sessionHighUpdated = { bar = period, price = sess.high }
+        ev.sessionLowUpdated = { bar = period, price = sess.low }
+        return
+    end
+
+    if not sess.active then return end
+
+    if src.high[period] > sess.high then
+        sess.high = src.high[period]
+        ev.sessionHighUpdated = { bar = period, price = sess.high }
+    end
+    if src.low[period] < sess.low then
+        sess.low = src.low[period]
+        ev.sessionLowUpdated = { bar = period, price = sess.low }
+    end
+end
+
+local function render(period, canRender)
+    local src = S.source
+    local st = S.state
+    local con = st.consolidation
+    local sess = st.session
+    local ev = st.events
+
+    T.consolidationHigh[period] = nil
+    T.consolidationLow[period] = nil
+    T.sessionHigh[period] = nil
+    T.sessionLow[period] = nil
+    T.canRenderStructure[period] = canRender and 1 or 0
+
+    if not canRender then
+        return
+    end
+
+    if con.active then
+        T.consolidationHigh[period] = con.high
+        T.consolidationLow[period] = con.low
+    end
+
+    if sess.active then
+        T.sessionHigh[period] = sess.high
+        T.sessionLow[period] = sess.low
+    end
+
+    local range = src.high[period] - src.low[period]
+    local offset = range > 0 and range * 0.2 or src:pipSize() * 8
+
+    if ev.consolidationCreated ~= nil then
+        safeTextSet(O.txtConsolidation, ev.consolidationCreated.bar, ev.consolidationCreated.low - offset, "Consolidation")
+    end
+
+    if ev.bisFired ~= nil then
+        safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS")
+    end
+
+    if ev.sessionHighUpdated ~= nil then
+        safeTextSet(O.txtSessionHigh, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "Session High")
+    end
+
+    if ev.sessionLowUpdated ~= nil then
+        safeTextSet(O.txtSessionLow, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "Session Low")
+    end
+
+    if instance.parameters.debug then
+        local debugText = "DBG con=" .. (con.active and "1" or "0") ..
+            " id=" .. (con.id or 0) ..
+            " low=" .. string.format("%.5f", con.low or 0) ..
+            " bisSrc=" .. (st.events.lastBisConsolidationId or 0)
+        safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, debugText)
+    end
+end
+
+function Init()
+    indicator:name("SB Structure Engine")
+    indicator:description("SB Structure Engine (Consolidation -> BIS -> Session High/Low)")
+    indicator:requiredSource(core.Bar)
+    indicator:type(core.Indicator)
+
+    indicator.parameters:addInteger("consolidationminbars", "Consolidation Min Bars", "", 8)
+    indicator.parameters:addInteger("consolidationstalebars", "Consolidation Stale Bars", "", 3)
+    indicator.parameters:addInteger("atrlen", "ATR Length", "", 14)
+    indicator.parameters:addDouble("maxconsolidationatrmult", "Max Consolidation Range ATR Mult", "", 1.0)
+    indicator.parameters:addDouble("maxdriftratio", "Max Consolidation Drift Ratio", "", 0.45)
+
+    indicator.parameters:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
+    indicator.parameters:addBoolean("upstreamistradeday", "Upstream Is Trade Day", "", false)
+    indicator.parameters:addBoolean("upstreamisfrd", "Upstream Is FRD", "", false)
+    indicator.parameters:addBoolean("upstreamisfgd", "Upstream Is FGD", "", false)
+    indicator.parameters:addInteger("upstreambias", "Upstream Bias", "", 0)
+
+    indicator.parameters:addBoolean("debug", "Debug", "", false)
+end
+
 function Prepare(nameOnly)
     S.source = instance.source
     S.first = S.source:first()
+
     instance:name(profile:id() .. "(" .. S.source:name() .. ")")
     if nameOnly then return end
 
-    S.m15 = getHistory(S.source:instrument(), "m15", S.source:isBid())
-    S.d1 = getHistory(S.source:instrument(), "D1", S.source:isBid())
+    T.consolidationHigh = instance:addStream("consolidation_high", core.Line, "Consolidation High", "", core.rgb(205, 205, 205), S.first)
+    T.consolidationLow = instance:addStream("consolidation_low", core.Line, "Consolidation Low", "", core.rgb(205, 205, 205), S.first)
+    T.sessionHigh = instance:addStream("session_high", core.Line, "Session High", "", core.rgb(255, 215, 0), S.first)
+    T.sessionLow = instance:addStream("session_low", core.Line, "Session Low", "", core.rgb(135, 206, 250), S.first)
+    T.canRenderStructure = instance:addStream("can_render_structure", core.Line, "Can Render Structure", "", core.rgb(169, 169, 169), S.first)
 
-    T.trend = instance:addStream("trend", core.Line, "Trend", "", core.rgb(173, 216, 230), S.first)
-    T.lastSwingHigh = instance:addStream("last_swing_high", core.Line, "Last Swing High", "", core.rgb(255, 140, 0), S.first)
-    T.lastSwingLow = instance:addStream("last_swing_low", core.Line, "Last Swing Low", "", core.rgb(0, 191, 255), S.first)
-    T.bosUp = instance:addStream("bos_up", core.Line, "BOS Up", "", core.rgb(0, 200, 0), S.first)
-    T.bosDown = instance:addStream("bos_down", core.Line, "BOS Down", "", core.rgb(220, 20, 60), S.first)
-    T.chochUp = instance:addStream("choch_up", core.Line, "CHoCH Up", "", core.rgb(152, 251, 152), S.first)
-    T.chochDown = instance:addStream("choch_down", core.Line, "CHoCH Down", "", core.rgb(255, 160, 122), S.first)
-    T.structureQualified = instance:addStream("structure_qualified", core.Line, "Structure Qualified", "", core.rgb(255, 215, 0), S.first)
-
-    O.txtBosUp = instance:createTextOutput("", "SB_BOS_UP", "Arial", 8, core.H_Center, core.V_Bottom, core.rgb(0, 200, 0), 0)
-    O.txtBosDown = instance:createTextOutput("", "SB_BOS_DOWN", "Arial", 8, core.H_Center, core.V_Top, core.rgb(220, 20, 60), 0)
-    O.txtChochUp = instance:createTextOutput("", "SB_CHOCH_UP", "Arial", 8, core.H_Center, core.V_Bottom, core.rgb(0, 120, 0), 0)
-    O.txtChochDown = instance:createTextOutput("", "SB_CHOCH_DOWN", "Arial", 8, core.H_Center, core.V_Top, core.rgb(178, 34, 34), 0)
-    O.txtTrend = instance:createTextOutput("", "SB_TREND", "Arial", 9, core.H_Right, core.V_Top, core.rgb(230, 230, 250), 0)
+    O.txtConsolidation = instance:createTextOutput("", "SB_CONSOLIDATION", "Arial", 8, core.H_Center, core.V_Top, core.rgb(210, 210, 210), 0)
+    O.txtBis = instance:createTextOutput("", "SB_BIS", "Arial", 9, core.H_Center, core.V_Top, core.rgb(220, 20, 60), 0)
+    O.txtSessionHigh = instance:createTextOutput("", "SB_SESSION_HIGH", "Arial", 8, core.H_Center, core.V_Bottom, core.rgb(255, 215, 0), 0)
+    O.txtSessionLow = instance:createTextOutput("", "SB_SESSION_LOW", "Arial", 8, core.H_Center, core.V_Top, core.rgb(135, 206, 250), 0)
+    O.txtDebug = instance:createTextOutput("", "SB_STRUCTURE_DEBUG", "Arial", 7, core.H_Left, core.V_Top, core.rgb(180, 180, 180), 0)
 end
 
 function Update(period, mode)
     if S.source == nil or period < S.first then return end
 
-    local d = nil
-    if shared ~= nil and S.m15 ~= nil and S.d1 ~= nil then
-        local ts = S.source:date(period)
-        local d1idx = shared.find_history_index_by_time(S.d1, ts)
-        d = daytype(d1idx)
-    end
+    local st = S.state
+    clearEvents(st.events)
 
-    S.day.isTradeDay = d ~= nil and d.is_trade_day or false
-    S.day.bias = d and (d.day_bias or d.bias) or 0
+    st.day.isTradeDay = instance.parameters.upstreamistradeday
+    st.day.isFrd = instance.parameters.upstreamisfrd
+    st.day.isFgd = instance.parameters.upstreamisfgd
+    st.day.bias = instance.parameters.upstreambias
 
-    local st = S.state.structure
-    st.bosUp = false
-    st.bosDown = false
-    st.chochUp = false
-    st.chochDown = false
-    st.structureQualified = false
+    local canRenderStructure = (not instance.parameters.requiretradeday) or st.day.isTradeDay
 
-    local bosLeft = math.max(1, instance.parameters.bosleft)
-    local bosRight = math.max(1, instance.parameters.bosright)
-    local pivotPos = period - bosRight
-
-    local ph = pivotHigh(S.source, pivotPos, bosLeft, bosRight)
-    if ph ~= nil then
-        st.prevSwingHigh = st.lastSwingHigh
-        st.lastSwingHigh = ph
-    end
-
-    local pl = pivotLow(S.source, pivotPos, bosLeft, bosRight)
-    if pl ~= nil then
-        st.prevSwingLow = st.lastSwingLow
-        st.lastSwingLow = pl
-    end
-
-    local breakHighPrice = instance.parameters.usecloseforbos and S.source.close[period] or S.source.high[period]
-    local breakLowPrice = instance.parameters.usecloseforbos and S.source.close[period] or S.source.low[period]
-    local prevBreakHigh = (period > S.first) and (instance.parameters.usecloseforbos and S.source.close[period - 1] or S.source.high[period - 1]) or nil
-    local prevBreakLow = (period > S.first) and (instance.parameters.usecloseforbos and S.source.close[period - 1] or S.source.low[period - 1]) or nil
-
-    local rawBosUp = st.lastSwingHigh ~= nil and breakHighPrice > st.lastSwingHigh and (period == S.first or prevBreakHigh <= st.lastSwingHigh)
-    local rawBosDown = st.lastSwingLow ~= nil and breakLowPrice < st.lastSwingLow and (period == S.first or prevBreakLow >= st.lastSwingLow)
-
-    if instance.parameters.ignorecounterbiasbreak and S.day.bias ~= 0 then
-        if S.day.bias > 0 then rawBosDown = false end
-        if S.day.bias < 0 then rawBosUp = false end
-    end
-
-    local previousTrend = st.trend
-    if rawBosUp then
-        st.bosUp = true
-        if instance.parameters.enablechoch and previousTrend == "down" then st.chochUp = true end
-        st.trend = "up"
-    end
-    if rawBosDown then
-        st.bosDown = true
-        if instance.parameters.enablechoch and previousTrend == "up" then st.chochDown = true end
-        st.trend = "down"
-    end
-
-    local tradeDayGateOk = (not instance.parameters.requiretradeday) or S.day.isTradeDay
-    local biasGateOk = (not instance.parameters.requirebiasmatch) or isBiasMatch(S.day.bias, st.trend)
-
-    if tradeDayGateOk and biasGateOk and (st.bosUp or st.bosDown or st.chochUp or st.chochDown) then
-        st.structureQualified = true
-    end
-
-    T.trend[period] = mapTrendToCode(st.trend)
-    T.lastSwingHigh[period] = instance.parameters.showswinglevels and st.lastSwingHigh or nil
-    T.lastSwingLow[period] = instance.parameters.showswinglevels and st.lastSwingLow or nil
-    T.bosUp[period] = st.bosUp and 1 or 0
-    T.bosDown[period] = st.bosDown and 1 or 0
-    T.chochUp[period] = st.chochUp and 1 or 0
-    T.chochDown[period] = st.chochDown and 1 or 0
-    T.structureQualified[period] = st.structureQualified and 1 or 0
-
-    local range = (S.source.high[period] - S.source.low[period])
-    local offset = range > 0 and range * 0.2 or S.source:pipSize() * 10
-
-    if instance.parameters.showbostext then
-        if st.bosUp then safeTextSet(O.txtBosUp, period, S.source.high[period] + offset, "BOS↑") end
-        if st.bosDown then safeTextSet(O.txtBosDown, period, S.source.low[period] - offset, "BOS↓") end
-    end
-
-    if instance.parameters.showchochtext then
-        if st.chochUp then safeTextSet(O.txtChochUp, period, S.source.high[period] + offset * 1.5, "CHoCH↑") end
-        if st.chochDown then safeTextSet(O.txtChochDown, period, S.source.low[period] - offset * 1.5, "CHoCH↓") end
-    end
-
-    if instance.parameters.showtrendtext then
-        local trendText = "TREND NONE"
-        if st.trend == "up" then trendText = "TREND UP" end
-        if st.trend == "down" then trendText = "TREND DOWN" end
-        local trendPrice = st.trend == "down" and (S.source.low[period] - offset * 2) or (S.source.high[period] + offset * 2)
-        safeTextSet(O.txtTrend, period, trendPrice, trendText)
-    end
+    detectConsolidation(period, canRenderStructure)
+    updateSession(period, canRenderStructure)
+    render(period, canRenderStructure)
 end
 
 function ReleaseInstance() end

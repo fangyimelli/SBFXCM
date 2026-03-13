@@ -314,3 +314,43 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 ### 可驗證結果
 - 掛上 `SB_Structure_Engine.lua` 後，不需手動調參即可直接顯示 swing level + BOS/CHoCH/TREND 文字。
 - 文字會綁定事件 bar 價格附近，不會固定擠在左上角。
+
+## 2026-03-13 結構引擎（Structure Engine）正式輸出收斂
+
+`SB_Structure_Engine.lua` 已改為只輸出三種正式資訊（且必須經過 trade-day gate）：
+1. `Consolidation`
+2. `BIS`（只限向下跌破 consolidation low）
+3. `Session High / Session Low`
+
+### Structure Engine 責任邊界（本輪）
+- Structure 不再輸出 `BOS/CHoCH/swing/trend/bias` 等正式文字。
+- Structure 不自行重建 Trade Day；改由上游輸入（stub/interface）：
+  - `upstreamistradeday`
+  - `upstreamisfrd`
+  - `upstreamisfgd`
+  - `upstreambias`
+- 正式渲染統一走單一 gate：`canRenderStructure = isTradeDay`。
+
+### Consolidation 判定（程式化）
+- 建立最小 bars 視窗（預設 8）
+- 區間寬度需滿足：
+  - `consolidationRange <= ATR(14) * maxconsolidationatrmult`（預設 1.0）
+- 區間漂移需受限（避免趨勢段誤判）：
+  - `abs(close_now - close_start) <= consolidationRange * maxdriftratio`（預設 0.45）
+- 成立後進入 active consolidation state（含 id/high/low/start/lastInside/active/brokenDown）。
+
+### BIS 判定（單次事件）
+- 觸發條件採用穩定版本：`close < consolidationLow`。
+- 只允許向下 break（不做向上 break 顯示）。
+- 同一 consolidation id 只觸發一次，內建去重：`lastBisConsolidationId`。
+
+### Session High / Session Low
+- 在 BIS 觸發後啟動 session state。
+- 後續只維護目前有效的一組 `session high / session low`。
+- 圖上只標必要更新，不把所有歷史 session levels 全塞滿。
+
+### 可驗證（圖上）
+- Trade Day = false：正式圖面不顯示 Consolidation/BIS/Session High/Low。
+- Trade Day = true 且進入箱型：只見 consolidation 邊界與單一 `Consolidation` 文字。
+- 向下有效破位：只在觸發 K 棒看到一次 `BIS`。
+- BIS 之後：可持續看到 `Session High / Session Low` 更新。
