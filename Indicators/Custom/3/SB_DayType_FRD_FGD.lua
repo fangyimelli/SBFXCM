@@ -1005,10 +1005,9 @@ build_day_record = function(day_idx)
     local nearMissBasicFgd = false
     local nearMissQualifiedFgd = false
     if prevIsPump and eventDown then
-        local basicMissFrd = 0
-        if not eventRangePass then basicMissFrd = basicMissFrd + 1 end
-        if not eventClvLowPass then basicMissFrd = basicMissFrd + 1 end
-        nearMissBasicFrd = (not basicFrd) and (basicMissFrd == 1)
+        -- Directionally-correct FRD days should still surface as near-miss even when
+        -- more than one gate fails, so users can see why FRD wasn't confirmed.
+        nearMissBasicFrd = (not basicFrd) and ((not eventRangePass) or (not eventClvLowPass))
 
         local qualifiedMissFrd = 0
         if not reclaimPassFrd then qualifiedMissFrd = qualifiedMissFrd + 1 end
@@ -1016,10 +1015,9 @@ build_day_record = function(day_idx)
         nearMissQualifiedFrd = basicFrd and (not qualifiedFrd) and (qualifiedMissFrd == 1)
     end
     if prevIsDump and eventUp then
-        local basicMissFgd = 0
-        if not eventRangePass then basicMissFgd = basicMissFgd + 1 end
-        if not eventClvHighPass then basicMissFgd = basicMissFgd + 1 end
-        nearMissBasicFgd = (not basicFgd) and (basicMissFgd == 1)
+        -- Directionally-correct FGD days should still surface as near-miss even when
+        -- more than one gate fails, so users can see why FGD wasn't confirmed.
+        nearMissBasicFgd = (not basicFgd) and ((not eventRangePass) or (not eventClvHighPass))
 
         local qualifiedMissFgd = 0
         if not reclaimPassFgd then qualifiedMissFgd = qualifiedMissFgd + 1 end
