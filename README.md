@@ -235,6 +235,12 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
    - 直接對照本檔第 2~7 章
    - 每層「該做/不該做」皆已列出
 
+5. **Structure gate 故障排查（upstream 擋住）**
+   - 在 `SB_Structure_Engine.lua` 先看 stream `can_render_structure` 是否為 `0`
+   - 若為 `0`，再看 `gate_upstream_trade_day` 是否有值（nil/空值通常代表 upstream DayType 未接線）
+   - 同步看 `gate_require_trade_day` 與 `gate_final_can_render`，快速定位是「require gate」還是「upstream 缺失」造成阻擋
+   - 若 upstream 暫時未接線，可開啟參數 `allow_render_when_upstream_missing=true` 作為 fallback，避免結構畫面全空
+
 ---
 
 ## 11) 本輪（sandbox only）FRD/FGD 全面重構重點
