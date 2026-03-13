@@ -265,3 +265,52 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 1. `basicFrd/basicFgd` 與 `qualifiedFrd/qualifiedFgd` 已分離，quality 不再吞掉 basic event。  
 2. `Trade Day` 由 `D` 日 event 對位到 `D+1`，且與 event label 互斥。  
 3. FRD/FGD 條件使用對稱 gate（ATR、CLV、reclaim、score 維度一致）。
+
+---
+
+## 11) Structure Engine（本輪更新：SB_Structure_Engine.lua）
+
+### 責任定義（Structure only）
+- swing high / swing low 辨識
+- BOS up / BOS down 辨識
+- CHoCH up / CHoCH down 辨識
+- trend state 維護
+- 依 DayType gate（Trade Day + Bias Match）過濾有效 structure
+
+### Structure SSOT
+`state.structure` 單一真實來源：
+- trend
+- lastSwingHigh / lastSwingLow
+- prevSwingHigh / prevSwingLow
+- bosUp / bosDown
+- chochUp / chochDown
+- structureQualified
+
+顯示層（stream/text）只讀上述 SSOT，不再額外建立「決定行為」的隱藏狀態。
+
+### 參數預設（掛上即用）
+- BOS Left = 2
+- BOS Right = 2
+- Use Close For BOS = Yes
+- Enable CHoCH = Yes
+- Require Trade Day = Yes
+- Require Bias Match = Yes
+- Ignore Counter Bias Break = Yes
+- Show Swing Levels = Yes
+- Show BOS Text = Yes
+- Show CHoCH Text = Yes
+- Show Trend Text = Yes
+- Debug = No
+
+### 顯示方式（FXCM 可見）
+- Swing levels：`lastSwingHigh` / `lastSwingLow` line stream
+- BOS/CHoCH/TREND：採 `instance:createTextOutput(...)` + `TextOutput:set(...)`
+- BOS↑：事件 bar 上方
+- BOS↓：事件 bar 下方
+- CHoCH↑：事件 bar 上方
+- CHoCH↓：事件 bar 下方
+- TREND UP/DOWN：最新 bar 附近（上/下方）
+
+### 可驗證結果
+- 掛上 `SB_Structure_Engine.lua` 後，不需手動調參即可直接顯示 swing level + BOS/CHoCH/TREND 文字。
+- 文字會綁定事件 bar 價格附近，不會固定擠在左上角。

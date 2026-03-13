@@ -19,17 +19,16 @@ local S = {
             chochUp = false,
             chochDown = false,
             structureQualified = false
-        },
-        day = {
-            isTradeDay = false,
-            bias = 0,
-            isFrd = false,
-            isFgd = false
         }
+    },
+    day = {
+        isTradeDay = false,
+        bias = 0
     }
 }
 
 local T = {}
+local O = {}
 
 function Init()
     indicator:name("SB Structure Engine")
@@ -44,10 +43,10 @@ function Init()
     indicator.parameters:addBoolean("requiretradeday", "Require Trade Day", "", true)
     indicator.parameters:addBoolean("requirebiasmatch", "Require Bias Match", "", true)
     indicator.parameters:addBoolean("ignorecounterbiasbreak", "Ignore Counter Bias Break", "", true)
-    indicator.parameters:addBoolean("showswingpoints", "Show Swing Points", "", true)
-    indicator.parameters:addBoolean("showboslabels", "Show BOS Labels", "", true)
-    indicator.parameters:addBoolean("showchochlabels", "Show CHoCH Labels", "", true)
-    indicator.parameters:addBoolean("showtrendlabel", "Show Trend Label", "", true)
+    indicator.parameters:addBoolean("showswinglevels", "Show Swing Levels", "", true)
+    indicator.parameters:addBoolean("showbostext", "Show BOS Text", "", true)
+    indicator.parameters:addBoolean("showchochtext", "Show CHoCH Text", "", true)
+    indicator.parameters:addBoolean("showtrendtext", "Show Trend Text", "", true)
     indicator.parameters:addBoolean("debug", "Debug", "", false)
 end
 
@@ -100,6 +99,11 @@ local function pivotLow(stream, p, l, r)
     return v
 end
 
+local function safeTextSet(out, period, price, text)
+    if out == nil or period == nil or price == nil or text == nil then return end
+    out:set(period, price, text)
+end
+
 function Prepare(nameOnly)
     S.source = instance.source
     S.first = S.source:first()
@@ -118,31 +122,25 @@ function Prepare(nameOnly)
     T.chochDown = instance:addStream("choch_down", core.Line, "CHoCH Down", "", core.rgb(255, 160, 122), S.first)
     T.structureQualified = instance:addStream("structure_qualified", core.Line, "Structure Qualified", "", core.rgb(255, 215, 0), S.first)
 
-    T.swingHighPoint = instance:addStream("swing_high_point", core.Line, "Swing High Point", "", core.rgb(255, 215, 0), S.first)
-    T.swingLowPoint = instance:addStream("swing_low_point", core.Line, "Swing Low Point", "", core.rgb(255, 255, 255), S.first)
-    T.bosUpLabel = instance:addStream("bos_up_label", core.Line, "BOS Up Label", "", core.rgb(50, 205, 50), S.first)
-    T.bosDownLabel = instance:addStream("bos_down_label", core.Line, "BOS Down Label", "", core.rgb(255, 99, 71), S.first)
-    T.chochUpLabel = instance:addStream("choch_up_label", core.Line, "CHoCH Up Label", "", core.rgb(144, 238, 144), S.first)
-    T.chochDownLabel = instance:addStream("choch_down_label", core.Line, "CHoCH Down Label", "", core.rgb(255, 182, 193), S.first)
-    T.trendLabel = instance:addStream("trend_label", core.Line, "Trend Label", "", core.rgb(230, 230, 250), S.first)
-
-    T.debugTradeDay = instance:addStream("debug_is_trade_day", core.Line, "Debug Trade Day", "", core.rgb(255, 215, 0), S.first)
-    T.debugBias = instance:addStream("debug_bias", core.Line, "Debug Bias", "", core.rgb(186, 85, 211), S.first)
-    T.debugIsFrd = instance:addStream("debug_is_frd", core.Line, "Debug Is FRD", "", core.rgb(255, 140, 0), S.first)
-    T.debugIsFgd = instance:addStream("debug_is_fgd", core.Line, "Debug Is FGD", "", core.rgb(30, 144, 255), S.first)
+    O.txtBosUp = instance:createTextOutput("", "SB_BOS_UP", "Arial", 8, core.H_Center, core.V_Bottom, core.rgb(0, 200, 0), 0)
+    O.txtBosDown = instance:createTextOutput("", "SB_BOS_DOWN", "Arial", 8, core.H_Center, core.V_Top, core.rgb(220, 20, 60), 0)
+    O.txtChochUp = instance:createTextOutput("", "SB_CHOCH_UP", "Arial", 8, core.H_Center, core.V_Bottom, core.rgb(0, 120, 0), 0)
+    O.txtChochDown = instance:createTextOutput("", "SB_CHOCH_DOWN", "Arial", 8, core.H_Center, core.V_Top, core.rgb(178, 34, 34), 0)
+    O.txtTrend = instance:createTextOutput("", "SB_TREND", "Arial", 9, core.H_Right, core.V_Top, core.rgb(230, 230, 250), 0)
 end
 
 function Update(period, mode)
-    if shared == nil or S.source == nil or S.m15 == nil or S.d1 == nil or period < S.first then return end
+    if S.source == nil or period < S.first then return end
 
-    local ts = S.source:date(period)
-    local d1idx = shared.find_history_index_by_time(S.d1, ts)
-    local d = daytype(d1idx)
+    local d = nil
+    if shared ~= nil and S.m15 ~= nil and S.d1 ~= nil then
+        local ts = S.source:date(period)
+        local d1idx = shared.find_history_index_by_time(S.d1, ts)
+        d = daytype(d1idx)
+    end
 
-    S.state.day.isTradeDay = d ~= nil and d.is_trade_day or false
-    S.state.day.bias = d and (d.day_bias or d.bias) or 0
-    S.state.day.isFrd = d ~= nil and (d.is_frd_event_day or d.is_frd_trade_day_candidate) or false
-    S.state.day.isFgd = d ~= nil and (d.is_fgd_event_day or d.is_fgd_trade_day_candidate) or false
+    S.day.isTradeDay = d ~= nil and d.is_trade_day or false
+    S.day.bias = d and (d.day_bias or d.bias) or 0
 
     local st = S.state.structure
     st.bosUp = false
@@ -169,15 +167,15 @@ function Update(period, mode)
 
     local breakHighPrice = instance.parameters.usecloseforbos and S.source.close[period] or S.source.high[period]
     local breakLowPrice = instance.parameters.usecloseforbos and S.source.close[period] or S.source.low[period]
-    local prevBreakHigh = instance.parameters.usecloseforbos and S.source.close[period - 1] or S.source.high[period - 1]
-    local prevBreakLow = instance.parameters.usecloseforbos and S.source.close[period - 1] or S.source.low[period - 1]
+    local prevBreakHigh = (period > S.first) and (instance.parameters.usecloseforbos and S.source.close[period - 1] or S.source.high[period - 1]) or nil
+    local prevBreakLow = (period > S.first) and (instance.parameters.usecloseforbos and S.source.close[period - 1] or S.source.low[period - 1]) or nil
 
     local rawBosUp = st.lastSwingHigh ~= nil and breakHighPrice > st.lastSwingHigh and (period == S.first or prevBreakHigh <= st.lastSwingHigh)
     local rawBosDown = st.lastSwingLow ~= nil and breakLowPrice < st.lastSwingLow and (period == S.first or prevBreakLow >= st.lastSwingLow)
 
-    if instance.parameters.ignorecounterbiasbreak and S.state.day.bias ~= 0 then
-        if S.state.day.bias > 0 then rawBosDown = false end
-        if S.state.day.bias < 0 then rawBosUp = false end
+    if instance.parameters.ignorecounterbiasbreak and S.day.bias ~= 0 then
+        if S.day.bias > 0 then rawBosDown = false end
+        if S.day.bias < 0 then rawBosUp = false end
     end
 
     local previousTrend = st.trend
@@ -192,34 +190,42 @@ function Update(period, mode)
         st.trend = "down"
     end
 
-    local tradeDayGateOk = (not instance.parameters.requiretradeday) or S.state.day.isTradeDay
-    local biasGateOk = (not instance.parameters.requirebiasmatch) or isBiasMatch(S.state.day.bias, st.trend)
+    local tradeDayGateOk = (not instance.parameters.requiretradeday) or S.day.isTradeDay
+    local biasGateOk = (not instance.parameters.requirebiasmatch) or isBiasMatch(S.day.bias, st.trend)
 
     if tradeDayGateOk and biasGateOk and (st.bosUp or st.bosDown or st.chochUp or st.chochDown) then
         st.structureQualified = true
     end
 
     T.trend[period] = mapTrendToCode(st.trend)
-    T.lastSwingHigh[period] = st.lastSwingHigh
-    T.lastSwingLow[period] = st.lastSwingLow
+    T.lastSwingHigh[period] = instance.parameters.showswinglevels and st.lastSwingHigh or nil
+    T.lastSwingLow[period] = instance.parameters.showswinglevels and st.lastSwingLow or nil
     T.bosUp[period] = st.bosUp and 1 or 0
     T.bosDown[period] = st.bosDown and 1 or 0
     T.chochUp[period] = st.chochUp and 1 or 0
     T.chochDown[period] = st.chochDown and 1 or 0
     T.structureQualified[period] = st.structureQualified and 1 or 0
 
-    T.swingHighPoint[period] = instance.parameters.showswingpoints and ph or nil
-    T.swingLowPoint[period] = instance.parameters.showswingpoints and pl or nil
-    T.bosUpLabel[period] = instance.parameters.showboslabels and st.bosUp and S.source.close[period] or nil
-    T.bosDownLabel[period] = instance.parameters.showboslabels and st.bosDown and S.source.close[period] or nil
-    T.chochUpLabel[period] = instance.parameters.showchochlabels and st.chochUp and S.source.close[period] or nil
-    T.chochDownLabel[period] = instance.parameters.showchochlabels and st.chochDown and S.source.close[period] or nil
-    T.trendLabel[period] = instance.parameters.showtrendlabel and mapTrendToCode(st.trend) or nil
+    local range = (S.source.high[period] - S.source.low[period])
+    local offset = range > 0 and range * 0.2 or S.source:pipSize() * 10
 
-    T.debugTradeDay[period] = instance.parameters.debug and (S.state.day.isTradeDay and 1 or 0) or nil
-    T.debugBias[period] = instance.parameters.debug and S.state.day.bias or nil
-    T.debugIsFrd[period] = instance.parameters.debug and (S.state.day.isFrd and 1 or 0) or nil
-    T.debugIsFgd[period] = instance.parameters.debug and (S.state.day.isFgd and 1 or 0) or nil
+    if instance.parameters.showbostext then
+        if st.bosUp then safeTextSet(O.txtBosUp, period, S.source.high[period] + offset, "BOS↑") end
+        if st.bosDown then safeTextSet(O.txtBosDown, period, S.source.low[period] - offset, "BOS↓") end
+    end
+
+    if instance.parameters.showchochtext then
+        if st.chochUp then safeTextSet(O.txtChochUp, period, S.source.high[period] + offset * 1.5, "CHoCH↑") end
+        if st.chochDown then safeTextSet(O.txtChochDown, period, S.source.low[period] - offset * 1.5, "CHoCH↓") end
+    end
+
+    if instance.parameters.showtrendtext then
+        local trendText = "TREND NONE"
+        if st.trend == "up" then trendText = "TREND UP" end
+        if st.trend == "down" then trendText = "TREND DOWN" end
+        local trendPrice = st.trend == "down" and (S.source.low[period] - offset * 2) or (S.source.high[period] + offset * 2)
+        safeTextSet(O.txtTrend, period, trendPrice, trendText)
+    end
 end
 
 function ReleaseInstance() end
