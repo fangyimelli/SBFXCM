@@ -50,6 +50,10 @@ local S = {
             consEndBar = nil,
             consHigh = nil,
             consLow = nil
+        },
+        gate = {
+            hasUpstream = false,
+            upstreamTradeDay = nil
         }
     }
 }
@@ -267,8 +271,15 @@ local function render(period, canRender)
     T.sessionHigh[period] = nil
     T.sessionLow[period] = nil
     T.canRenderStructure[period] = canRender and 1 or 0
+    T.gateRequireTradeDay[period] = instance.parameters.requiretradeday and 1 or 0
+    T.gateUpstreamTradeDay[period] = st.gate.upstreamTradeDay
+    T.gateFinalCanRender[period] = canRender and 1 or 0
+
+    local range = src.high[period] - src.low[period]
+    local offset = range > 0 and range * 0.2 or src:pipSize() * 8
 
     if not canRender then
+        safeTextSet(O.txtGateWait, period, src.high[period] + offset, "WAIT_UPSTREAM_TRADE_DAY")
         return
     end
 
@@ -298,9 +309,6 @@ local function render(period, canRender)
         T.sessionHigh[period] = sess.high
         T.sessionLow[period] = sess.low
     end
-
-    local range = src.high[period] - src.low[period]
-    local offset = range > 0 and range * 0.2 or src:pipSize() * 8
 
     if ev.consolidationCreated ~= nil and not disp.consShown then
         safeTextSet(O.txtConsolidation, ev.consolidationCreated.bar, ev.consolidationCreated.low - offset, "CONS ✓")
@@ -349,6 +357,7 @@ function Init()
     indicator.parameters:addDouble("maxdriftratio", "Max Consolidation Drift Ratio", "", 0.45)
 
     indicator.parameters:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
+    indicator.parameters:addBoolean("allow_render_when_upstream_missing", "Allow Render When Upstream Missing", "", false)
     indicator.parameters:addBoolean("manualoverride", "Manual Override DayType (Debug)", "", false)
     indicator.parameters:addSource("daytype_trade_day_stream", "DayType Stream: is_trade_day", "", "close")
     indicator.parameters:addSource("daytype_frd_event_stream", "DayType Stream: is_frd_event_day", "", "close")
@@ -392,11 +401,15 @@ function Prepare(nameOnly)
     T.sessionHigh = instance:addStream("session_high", core.Line, "Session High", "", core.rgb(255, 215, 0), S.first)
     T.sessionLow = instance:addStream("session_low", core.Line, "Session Low", "", core.rgb(135, 206, 250), S.first)
     T.canRenderStructure = instance:addStream("can_render_structure", core.Line, "Can Render Structure", "", core.rgb(169, 169, 169), S.first)
+    T.gateRequireTradeDay = instance:addStream("gate_require_trade_day", core.Line, "Gate Require Trade Day", "", core.rgb(112, 128, 144), S.first)
+    T.gateUpstreamTradeDay = instance:addStream("gate_upstream_trade_day", core.Line, "Gate Upstream Trade Day", "", core.rgb(143, 188, 143), S.first)
+    T.gateFinalCanRender = instance:addStream("gate_final_can_render", core.Line, "Gate Final Can Render", "", core.rgb(255, 140, 0), S.first)
 
     O.txtConsolidation = instance:createTextOutput("", "SB_CONSOLIDATION", "Arial", 8, core.H_Center, core.V_Top, core.rgb(210, 210, 210), 0)
     O.txtBis = instance:createTextOutput("", "SB_BIS", "Arial", 9, core.H_Center, core.V_Top, core.rgb(220, 20, 60), 0)
     O.txtSessionHigh = instance:createTextOutput("", "SB_SESSION_HIGH", "Arial", 8, core.H_Center, core.V_Bottom, core.rgb(255, 215, 0), 0)
     O.txtSessionLow = instance:createTextOutput("", "SB_SESSION_LOW", "Arial", 8, core.H_Center, core.V_Top, core.rgb(135, 206, 250), 0)
+    O.txtGateWait = instance:createTextOutput("", "SB_GATE_WAIT", "Arial", 8, core.H_Right, core.V_Top, core.rgb(255, 165, 0), 0)
     O.txtDebug = instance:createTextOutput("", "SB_STRUCTURE_DEBUG", "Arial", 7, core.H_Left, core.V_Top, core.rgb(180, 180, 180), 0)
 end
 
@@ -406,25 +419,32 @@ function Update(period, mode)
     local st = S.state
     clearEvents(st.events)
 
+    local gate = st.gate
+
     if instance.parameters.manualoverride then
         st.day.isTradeDay = instance.parameters.upstreamistradeday
         st.day.isFrd = instance.parameters.upstreamisfrd
         st.day.isFgd = instance.parameters.upstreamisfgd
         st.day.bias = instance.parameters.upstreambias
+        gate.hasUpstream = true
+        gate.upstreamTradeDay = st.day.isTradeDay and 1 or 0
     else
         local up = S.upstream
         local hasUpstream = up.tradeDay ~= nil and up.frdEvent ~= nil and up.fgdEvent ~= nil and up.dayBias ~= nil
+        gate.hasUpstream = hasUpstream
 
         if hasUpstream then
             st.day.isTradeDay = (up.tradeDay[period] or 0) > 0
             st.day.isFrd = (up.frdEvent[period] or 0) > 0
             st.day.isFgd = (up.fgdEvent[period] or 0) > 0
             st.day.bias = math.floor((up.dayBias[period] or 0) + 0.000001)
+            gate.upstreamTradeDay = (up.tradeDay[period] or 0)
         else
             st.day.isTradeDay = false
             st.day.isFrd = false
             st.day.isFgd = false
             st.day.bias = 0
+            gate.upstreamTradeDay = nil
             if not up.warnedMissing then
                 debugLog("Missing DayType upstream streams in Update(). Structure stays gated off until streams are connected or manual override is enabled.")
                 up.warnedMissing = true
@@ -432,7 +452,10 @@ function Update(period, mode)
         end
     end
 
-    local canRenderStructure = (not instance.parameters.requiretradeday) or st.day.isTradeDay
+    local canRenderStructure =
+        (not instance.parameters.requiretradeday) or
+        st.day.isTradeDay or
+        (instance.parameters.allow_render_when_upstream_missing and (not instance.parameters.manualoverride) and (not gate.hasUpstream))
 
     detectConsolidation(period, canRenderStructure)
     updateSession(period, canRenderStructure)
