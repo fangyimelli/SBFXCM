@@ -5,7 +5,7 @@ local PEN_NEUTRAL = 20
 local PEN_RECT_HIGH = 21
 local PEN_RECT_LOW = 22
 
-local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, dayMarks={}, lastFullAuditDayKey=nil, symmetryAudit=nil, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW}}
+local S = {source=nil, first=nil, d1=nil, m15=nil, day_cache={}, dayMarks={}, lastFullAuditDayKey=nil, symmetryAudit=nil, draw={initialized=false, weekdayFont=FONT_WEEKDAY, dayTypeFont=FONT_DAYTYPE, debugFont=FONT_DEBUG, neutralPen=PEN_NEUTRAL, rectHighPen=PEN_RECT_HIGH, rectLowPen=PEN_RECT_LOW, refreshThrottleMs=300, lastRefreshClockMs=0, lastRefreshDateKey=nil}}
 local T = {}
 
 function Init()
@@ -70,6 +70,46 @@ local function debug_output(msg)
     local ok = safe_method(core.host, "trace", text)
     if ok then return end
     safe_method(core.host, "execute", "alertMessage", text)
+end
+
+local function now_clock_millis()
+    if type(os) == "table" and type(os.clock) == "function" then
+        return math.floor(os.clock() * 1000)
+    end
+    return 0
+end
+
+local function request_owner_draw_refresh(period, dayRecord)
+    if instance == nil or instance.parameters == nil then return end
+    if not instance.parameters.debug and not instance.parameters.ShowDayTypeLabels then return end
+
+    local d = dayRecord
+    local isNewDay = IsNewTradingDay(period)
+    local dayChanged = d ~= nil and d.dateKey ~= nil and d.dateKey ~= S.draw.lastRefreshDateKey
+    local nowMs = now_clock_millis()
+    local throttleMs = tonumber(S.draw.refreshThrottleMs) or 300
+    local throttledReady = (nowMs - (S.draw.lastRefreshClockMs or 0)) >= throttleMs
+    if not isNewDay and not dayChanged and not throttledReady then return end
+
+    -- ownerDrawn refresh: owner-drawn labels rely on Draw(), so Update() should proactively request repaint/invalidate.
+    local requested = false
+    local ok = safe_method(instance, "updateFrom", period)
+    if ok then requested = true end
+    if not requested and core ~= nil and core.host ~= nil then
+        ok = safe_method(core.host, "execute", "invalidate")
+        if ok then requested = true end
+    end
+    if not requested and core ~= nil and core.host ~= nil then
+        ok = safe_method(core.host, "execute", "repaint")
+        if ok then requested = true end
+    end
+
+    if requested then
+        S.draw.lastRefreshClockMs = nowMs
+        if d ~= nil then
+            S.draw.lastRefreshDateKey = d.dateKey
+        end
+    end
 end
 
 local function clamp_positive(v, fallback)
@@ -1146,6 +1186,8 @@ function Update(period, mode)
         emit_full_audit(d1_idx)
         S.lastFullAuditDayKey = d.dateKey
     end
+
+    request_owner_draw_refresh(period, d)
 end
 
 function ReleaseInstance()
