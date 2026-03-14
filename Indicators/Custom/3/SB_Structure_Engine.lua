@@ -43,7 +43,11 @@ local S = {
             consStartBar = nil,
             consEndBar = nil,
             consHigh = nil,
-            consLow = nil
+            consLow = nil,
+            session = nil,
+            sessionStartBar = nil,
+            sessionEndBar = nil,
+            sessionMid = nil
         },
         gate = {
             hasUpstream = false,
@@ -98,6 +102,39 @@ end
 local function safeTextSet(out, period, price, text)
     if out == nil or period == nil or price == nil or text == nil then return end
     out:set(period, price, text)
+end
+
+local function createSessionDisplay(params)
+    local color = params.sessioncolor or core.rgb(255, 215, 0)
+    return {
+        high = nil,
+        low = nil,
+        bands = {
+            upper = nil,
+            lower = nil,
+            mid = nil
+        },
+        labels = {
+            high = nil,
+            low = nil
+        },
+        color = color,
+        style = params.sessionlinestyle,
+        fillAlpha = params.sessionfillalpha,
+        showSessionHigh = params.showsessionhigh,
+        showSessionLow = params.showsessionlow,
+        showSessionLabels = params.showsessionlabels,
+        showSessionMid = params.showsessionmid
+    }
+end
+
+local function createChannelGroup(name, color, alpha)
+    if instance == nil or type(instance.createChannelGroup) ~= "function" then return nil end
+    local ok, group = pcall(function()
+        return instance:createChannelGroup(name, color, alpha)
+    end)
+    if not ok then return nil end
+    return group
 end
 
 local function minuteOfDay(ts)
@@ -264,6 +301,7 @@ local function updateSession(period, canRender)
 
     if not canRender then
         sess.active = false
+        sess.startBar = nil
         return
     end
 
@@ -302,6 +340,7 @@ local function render(period, canRender)
     T.consolidationLow[period] = nil
     T.sessionHigh[period] = nil
     T.sessionLow[period] = nil
+    T.sessionMid[period] = nil
     T.canRenderStructure[period] = canRender and 1 or 0
     T.gateRequireTradeDay[period] = instance.parameters.requiretradeday and 1 or 0
     T.gateUpstreamTradeDay[period] = st.gate.upstreamTradeDay
@@ -316,6 +355,10 @@ local function render(period, canRender)
         T.gateRenderReasonCode[period] = 0
         safeTextSet(O.txtGateWait, period, src.high[period] + offset, "WAIT_UPSTREAM_TRADE_DAY")
         return
+    end
+
+    if disp.session == nil then
+        disp.session = createSessionDisplay(instance.parameters)
     end
 
     if ev.consolidationCreated ~= nil then
@@ -351,9 +394,26 @@ local function render(period, canRender)
         T.consolidationLow[period] = disp.consLow
     end
 
-    if sess.active then
-        T.sessionHigh[period] = sess.high
-        T.sessionLow[period] = sess.low
+    if sess.active and sess.startBar ~= nil then
+        disp.sessionStartBar = sess.startBar
+        disp.sessionEndBar = period
+        disp.session.high = sess.high
+        disp.session.low = sess.low
+        disp.session.bands.mid = (sess.high + sess.low) / 2
+
+        local startBar = disp.sessionStartBar
+        local endBar = disp.sessionEndBar
+        for i = startBar, endBar do
+            if disp.session.showSessionHigh then
+                T.sessionHigh[i] = disp.session.high
+            end
+            if disp.session.showSessionLow then
+                T.sessionLow[i] = disp.session.low
+            end
+            if disp.session.showSessionMid then
+                T.sessionMid[i] = disp.session.bands.mid
+            end
+        end
     end
 
     if ev.consolidationCreated ~= nil and not disp.consShown then
@@ -366,12 +426,12 @@ local function render(period, canRender)
         disp.bisShown = true
     end
 
-    if ev.sessionHighUpdated ~= nil and not disp.sessionHighShown then
+    if ev.sessionHighUpdated ~= nil and not disp.sessionHighShown and disp.session.showSessionLabels then
         safeTextSet(O.txtSessionHigh, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "HOS/HOD ✓")
         disp.sessionHighShown = true
     end
 
-    if ev.sessionLowUpdated ~= nil and not disp.sessionLowShown then
+    if ev.sessionLowUpdated ~= nil and not disp.sessionLowShown and disp.session.showSessionLabels then
         safeTextSet(O.txtSessionLow, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "LOS/LOD ✓")
         disp.sessionLowShown = true
     end
@@ -410,6 +470,16 @@ function Init()
 
     p:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
     p:addBoolean("istradeday", "Is Trade Day", "", true)
+    p:addBoolean("showsessionhigh", "Show Session High", "", true)
+    p:addBoolean("showsessionlow", "Show Session Low", "", true)
+    p:addBoolean("showsessionlabels", "Show Session Labels", "", true)
+    p:addString("sessionlinestyle", "Session Line Style", "", "Solid")
+    p:addStringAlternative("sessionlinestyle", "Solid", "Solid", "")
+    p:addStringAlternative("sessionlinestyle", "Dash", "Dash", "")
+    p:addStringAlternative("sessionlinestyle", "Dot", "Dot", "")
+    p:addColor("sessioncolor", "Session Color", "", core.rgb(255, 215, 0))
+    p:addInteger("sessionfillalpha", "Session Fill Alpha", "", 30)
+    p:addBoolean("showsessionmid", "Show Session Mid", "", false)
     p:addBoolean("debug", "Debug", "", false)
 end
 
@@ -424,6 +494,7 @@ function Prepare(nameOnly)
     T.consolidationLow = instance:addStream("consolidation_low", core.Line, "Consolidation Low", "", core.rgb(205, 205, 205), S.first)
     T.sessionHigh = instance:addStream("session_high", core.Line, "Session High", "", core.rgb(255, 215, 0), S.first)
     T.sessionLow = instance:addStream("session_low", core.Line, "Session Low", "", core.rgb(135, 206, 250), S.first)
+    T.sessionMid = instance:addStream("session_mid", core.Line, "Session Mid", "", core.rgb(255, 255, 255), S.first)
     T.canRenderStructure = instance:addStream("can_render_structure", core.Line, "Can Render Structure", "", core.rgb(169, 169, 169), S.first)
     T.gateRequireTradeDay = instance:addStream("gate_require_trade_day", core.Line, "Gate Require Trade Day", "", core.rgb(112, 128, 144), S.first)
     T.gateUpstreamTradeDay = instance:addStream("gate_upstream_trade_day", core.Line, "Gate Upstream Trade Day", "", core.rgb(143, 188, 143), S.first)
@@ -437,6 +508,9 @@ function Prepare(nameOnly)
     O.txtSessionLow = instance:createTextOutput("", "SB_SESSION_LOW", "Arial", 8, core.H_Center, core.V_Top, core.rgb(135, 206, 250), 0)
     O.txtGateWait = instance:createTextOutput("", "SB_GATE_WAIT", "Arial", 8, core.H_Right, core.V_Top, core.rgb(255, 165, 0), 0)
     O.txtDebug = instance:createTextOutput("", "SB_STRUCTURE_DEBUG", "Arial", 7, core.H_Left, core.V_Top, core.rgb(180, 180, 180), 0)
+
+    S.state.display.session = createSessionDisplay(instance.parameters)
+    O.sessionChannel = createChannelGroup("SB_SESSION_CHANNEL", S.state.display.session.color, S.state.display.session.fillAlpha)
 end
 
 function Update(period, mode)
