@@ -278,9 +278,17 @@ function M.build_daytype_record(d1, m15, day_idx, params, day_cache, runtime_cac
     if prev == nil and prev_idx ~= nil and prev_idx >= d1:first() then
         prev = M.build_daytype_record(d1, m15, prev_idx, p, cache, runtime_cache)
     end
+    local trendContinuation = prev ~= nil
+        and base.bias ~= nil
+        and prev.day_bias ~= nil
+        and base.bias ~= 0
+        and base.bias == prev.day_bias
+
     local isFrdTradeCandidate = prev ~= nil and prev.is_frd_event_day
     local isFgdTradeCandidate = prev ~= nil and prev.is_fgd_event_day
     local isTradeDay = isFrdTradeCandidate or isFgdTradeCandidate
+    local prevIsEventDay = prev ~= nil and (prev.is_frd_event_day or prev.is_fgd_event_day)
+    local trendContinuationFlag = prevIsEventDay and trendContinuation
 
     local eventType = "none"
     local dayTypeCode = 0
@@ -315,6 +323,7 @@ function M.build_daytype_record(d1, m15, day_idx, params, day_cache, runtime_cac
         is_frd_trade_day_candidate = isFrdTradeCandidate,
         is_fgd_trade_day_candidate = isFgdTradeCandidate,
         is_trade_day = isTradeDay,
+        trend_continuation = trendContinuationFlag,
         has_valid_rectangle = rect.valid,
         rectangle_valid = rect.valid,
         rectangle_high = rect.high,
