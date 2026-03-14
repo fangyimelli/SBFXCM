@@ -270,6 +270,7 @@ end
 local function render(period, canRender)
     local src = S.source
     local st = S.state
+    local con = st.consolidation
     local sess = st.session
     local ev = st.events
     local disp = st.display
@@ -296,6 +297,20 @@ local function render(period, canRender)
         disp.consEndBar = ev.consolidationCreated.endBar or ev.consolidationCreated.bar
         disp.consHigh = ev.consolidationCreated.high
         disp.consLow = ev.consolidationCreated.low
+    end
+
+    if con.active and con.id ~= nil then
+        if disp.setupId ~= con.id then
+            disp.setupId = con.id
+            disp.consShown = false
+            disp.bisShown = false
+            disp.sessionHighShown = false
+            disp.sessionLowShown = false
+        end
+        disp.consStartBar = con.startBar
+        disp.consEndBar = con.endBar or period
+        disp.consHigh = con.high
+        disp.consLow = con.low
     end
 
     if disp.consStartBar ~= nil and disp.consEndBar ~= nil and disp.consHigh ~= nil and disp.consLow ~= nil and period >= disp.consStartBar and period <= disp.consEndBar then
