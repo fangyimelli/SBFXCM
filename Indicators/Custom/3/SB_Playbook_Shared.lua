@@ -133,15 +133,8 @@ function M.is_effective_trading_day_idx(d1, idx)
         return false
     end
 
-    if wday == 1 then
-        local prevIdx = idx - 1
-        if prevIdx < d1:first() then return false end
-        local prevWday = M.weekday_from_timestamp(d1:date(prevIdx))
-        if prevWday == 6 or prevWday == 7 then
-            return false
-        end
-    end
-
+    -- Sunday-stamped bars may represent Monday sessions on many FX feeds,
+    -- so only Saturday is treated as non-effective here.
     return true
 end
 

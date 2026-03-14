@@ -926,18 +926,8 @@ local function is_effective_trading_day_idx(idx)
         return false
     end
 
-    if wday == 1 then
-        -- Keep raw D1 timestamp as the primary signal. Sunday rows should be
-        -- skipped when they are true standalone Sunday bars (preceded by Friday),
-        -- but keep Monday sessions that are Sunday-stamped by some feeds.
-        local prevIdx = idx - 1
-        if prevIdx < S.d1:first() then return false end
-        local prevWday = weekday_from_timestamp(S.d1:date(prevIdx))
-        if prevWday == 6 or prevWday == 7 then
-            return false
-        end
-    end
-
+    -- Sunday-stamped bars may represent Monday sessions on many FX feeds,
+    -- so only Saturday is treated as non-effective here.
     return true
 end
 
