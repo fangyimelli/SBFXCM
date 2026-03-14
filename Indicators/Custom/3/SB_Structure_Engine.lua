@@ -175,13 +175,24 @@ local function createSessionDisplay(params)
     }
 end
 
-local function createChannelGroup(name, color, alpha)
+local function createChannelGroup(name, color, alpha, upper, lower)
     if instance == nil or type(instance.createChannelGroup) ~= "function" then return nil end
-    local ok, group = pcall(function()
-        return instance:createChannelGroup(name, color, alpha)
-    end)
-    if not ok then return nil end
-    return group
+
+    local attempts = {
+        function()
+            return instance:createChannelGroup(name, name, upper, lower, color, alpha)
+        end,
+        function()
+            return instance:createChannelGroup(name, color, alpha)
+        end
+    }
+
+    for _, attempt in ipairs(attempts) do
+        local ok, group = pcall(attempt)
+        if ok and group ~= nil then return group end
+    end
+
+    return nil
 end
 
 local function addInternalBandStream(id, title, first, color)
@@ -320,13 +331,13 @@ local function tryFireBisFromBox(period, ts, src, box, bis, ev, bisName, evField
 
     local oncePerBox = instance.parameters.bisonceperbox
 
-    if src.close[period] > box.high and (not bis.firedUp) and (not oncePerBox or not bis.firedAny) then
+    if src.high[period] > box.high and (not bis.firedUp) and (not oncePerBox or not bis.firedAny) then
         bis.firedUp = true
         bis.firedAny = true
         bis.fireBar = period
         bis.firePrice = src.high[period]
         ev[evField] = { bar = period, price = bis.firePrice, dir = "up", bis = bisName, sourceHigh = box.high, dayKey = box.dayKey }
-    elseif src.close[period] < box.low and (not bis.firedDown) and (not oncePerBox or not bis.firedAny) then
+    elseif src.low[period] < box.low and (not bis.firedDown) and (not oncePerBox or not bis.firedAny) then
         bis.firedDown = true
         bis.firedAny = true
         bis.fireBar = period
@@ -439,8 +450,8 @@ local function updateBoxesAndBis(period, canRender)
     local key = getDayKey(ts, shift)
     local prevStartMin = normalizeMinute(instance.parameters.prevboxstartmin or (22 * 60 + 30))
     local prevEndMin = normalizeMinute(instance.parameters.prevboxendmin or (24 * 60))
-    local londonStartMin = normalizeMinute(instance.parameters.londonstartmin or (8 * 60))
-    local londonEndMin = normalizeMinute(instance.parameters.londonendmin or (9 * 60))
+    local londonStartMin = normalizeMinute(instance.parameters.londonstartmin or (3 * 60))
+    local londonEndMin = normalizeMinute(instance.parameters.londonendmin or (12 * 60))
     local minute = minuteOfDay(ts)
 
     if st.prev2230Box.dayKey ~= key then
@@ -643,14 +654,13 @@ local function render(period, canRender, mode)
     local minute = minuteOfDay(ts)
     local shift = instance.parameters.timezoneshifthours or 0
     local key = getDayKey(ts, shift)
-    local bisExtendMin = normalizeMinute(instance.parameters.biswindowendmin or (9 * 60 + 30))
-    local londonStartMin = normalizeMinute(instance.parameters.londonstartmin or (8 * 60))
-    local londonEndMin = normalizeMinute(instance.parameters.londonendmin or (9 * 60))
-    local londonEndNorm = (londonEndMin == 1440) and 0 or londonEndMin
+    local londonStartMin = normalizeMinute(instance.parameters.londonstartmin or (3 * 60))
+    local londonEndMin = normalizeMinute(instance.parameters.londonendmin or (12 * 60))
+    local londonExtendMin = normalizeMinute(instance.parameters.londonextendmin or 1440)
 
     local prevBox = st.prev2230Box
     local showPrev2230 = instance.parameters.showprev2230box and prevBox ~= nil and prevBox.high ~= nil and prevBox.low ~= nil and prevBox.dayKey == key
-    local prevBoxVisible = showPrev2230 and minute ~= nil and minute < bisExtendMin
+    local prevBoxVisible = showPrev2230 and minute ~= nil
     if prevBoxVisible then
         T.prev2230High[period] = prevBox.high
         T.prev2230Low[period] = prevBox.low
@@ -669,7 +679,7 @@ local function render(period, canRender, mode)
     local londonVisible = false
     if showLondon and minute ~= nil then
         local inLondonWindow = isInWindow(ts, londonStartMin, londonEndMin)
-        local inExtension = londonBox.isReady and minute >= londonEndNorm and minute < bisExtendMin
+        local inExtension = londonBox.isReady and minute >= normalizeMinute(londonEndMin) and minute < londonExtendMin
         londonVisible = inLondonWindow or inExtension
     end
     if londonVisible then
@@ -795,8 +805,9 @@ function Init()
     p:addInteger("biswindowendmin", "BIS Window End Minute", "", 570)
     p:addInteger("prevboxstartmin", "Prev Box Start Minute", "", 22 * 60 + 30)
     p:addInteger("prevboxendmin", "Prev Box End Minute", "", 24 * 60)
-    p:addInteger("londonstartmin", "London Box Start Minute", "", 8 * 60)
-    p:addInteger("londonendmin", "London Box End Minute", "", 9 * 60)
+    p:addInteger("londonstartmin", "London Box Start Minute", "", 3 * 60)
+    p:addInteger("londonendmin", "London Box End Minute", "", 12 * 60)
+    p:addInteger("londonextendmin", "London Box Extend Until Minute", "", 24 * 60)
     p:addInteger("timezoneshifthours", "Timezone Shift Hours", "", 0)
     p:addBoolean("bisonceperbox", "BIS Once Per Box", "", false)
     p:addBoolean("bisallowrepeatinconsolidation", "Allow Repeat BIS in Consolidation", "", false)
@@ -850,13 +861,13 @@ function Prepare(nameOnly)
     O.txtDebug = instance:createTextOutput("", "SB_STRUCTURE_DEBUG", "Arial", 7, core.H_Left, core.V_Top, core.rgb(180, 180, 180), 0)
 
     S.state.display.session = createSessionDisplay(instance.parameters)
-    O.consolidationChannel = createChannelGroup("SB_CONSOLIDATION_CHANNEL", instance.parameters.conscolor, instance.parameters.consfillalpha)
+    O.consolidationChannel = createChannelGroup("SB_CONSOLIDATION_CHANNEL", instance.parameters.conscolor, instance.parameters.consfillalpha, T.consolidationHighBand, T.consolidationLowBand)
     bindChannelGroup(O.consolidationChannel, T.consolidationHighBand, T.consolidationLowBand)
-    O.sessionChannel = createChannelGroup("SB_SESSION_CHANNEL", S.state.display.session.color, S.state.display.session.fillAlpha)
+    O.sessionChannel = createChannelGroup("SB_SESSION_CHANNEL", S.state.display.session.color, S.state.display.session.fillAlpha, T.sessionHigh, T.sessionLow)
     bindChannelGroup(O.sessionChannel, T.sessionHigh, T.sessionLow)
-    O.prev2230Channel = createChannelGroup("SB_PREV2230_CHANNEL", instance.parameters.prev2230color, instance.parameters.prev2230fillalpha)
+    O.prev2230Channel = createChannelGroup("SB_PREV2230_CHANNEL", instance.parameters.prev2230color, instance.parameters.prev2230fillalpha, T.prev2230HighBand, T.prev2230LowBand)
     bindChannelGroup(O.prev2230Channel, T.prev2230HighBand, T.prev2230LowBand)
-    O.londonChannel = createChannelGroup("SB_LONDON_CHANNEL", instance.parameters.londoncolor, instance.parameters.londonfillalpha)
+    O.londonChannel = createChannelGroup("SB_LONDON_CHANNEL", instance.parameters.londoncolor, instance.parameters.londonfillalpha, T.londonHighBand, T.londonLowBand)
     bindChannelGroup(O.londonChannel, T.londonHighBand, T.londonLowBand)
 end
 
