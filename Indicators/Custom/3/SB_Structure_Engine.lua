@@ -382,28 +382,33 @@ local function render(period, canRender)
 end
 
 function Init()
-    indicator:name("SB Structure Engine (Engineering)")
-    indicator:description("SB Structure Engine Engineering/Debug (Consolidation -> BIS -> Session High/Low)")
-    indicator:requiredSource(core.Bar)
-    indicator:type(core.Indicator)
+    local ind = indicator or instance
+    if ind == nil then return end
 
-    indicator.parameters:addBoolean("simplemode", "Simple Mode", "", true)
-    indicator.parameters:addString("profile", "Simple Profile", "", "Default")
-    indicator.parameters:addStringAlternative("Default", "Default", "")
-    indicator.parameters:addStringAlternative("Tight", "Tight", "")
-    indicator.parameters:addStringAlternative("Loose", "Loose", "")
+    ind:name("SB Structure Engine (Engineering)")
+    ind:description("SB Structure Engine Engineering/Debug (Consolidation -> BIS -> Session High/Low)")
+    ind:requiredSource(core.Bar)
+    ind:type(core.Indicator)
 
-    indicator.parameters:addInteger("consolidationminbars", "Consolidation Min Bars", "", 8)
-    indicator.parameters:addInteger("consolidationstalebars", "Consolidation Stale Bars", "", 3)
-    indicator.parameters:addInteger("atrlen", "ATR Length", "", 14)
-    indicator.parameters:addDouble("maxconsolidationatrmult", "Max Consolidation Range ATR Mult", "", 1.0)
-    indicator.parameters:addDouble("maxdriftratio", "Max Consolidation Drift Ratio", "", 0.45)
+    local p = ind.parameters
 
-    indicator.parameters:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
-    indicator.parameters:addBoolean("istradeday", "Is Trade Day", "", true)
-    indicator.parameters:addInteger("daymode", "Day Mode (-1=FRD, 1=FGD)", "", -1)
+    p:addBoolean("simplemode", "Simple Mode", "", true)
+    p:addString("profile", "Simple Profile", "", "Default")
+    p:addStringAlternative("profile", "Default", "Default", "")
+    p:addStringAlternative("profile", "Tight", "Tight", "")
+    p:addStringAlternative("profile", "Loose", "Loose", "")
 
-    indicator.parameters:addBoolean("debug", "Debug", "", false)
+    p:addInteger("consolidationminbars", "Consolidation Min Bars", "", 8)
+    p:addInteger("consolidationstalebars", "Consolidation Stale Bars", "", 3)
+    p:addInteger("atrlen", "ATR Length", "", 14)
+    p:addDouble("maxconsolidationatrmult", "Max Consolidation Range ATR Mult", "", 1.0)
+    p:addDouble("maxdriftratio", "Max Consolidation Drift Ratio", "", 0.45)
+
+    p:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
+    p:addBoolean("istradeday", "Is Trade Day", "", true)
+    p:addInteger("daymode", "Day Mode (-1=FRD, 1=FGD)", "", -1)
+
+    p:addBoolean("debug", "Debug", "", false)
 end
 
 function Prepare(nameOnly)
