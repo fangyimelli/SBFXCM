@@ -379,6 +379,7 @@ local function build_audit_panel_lines(lastDayIdx)
     local impulseAtrMult = pumpDumpAtrMult
     local eventAtrMult = (eventRange ~= nil and eventAtr ~= nil and eventAtr > 0) and (eventRange / eventAtr) or nil
 
+    lines[#lines + 1] = "Date=" .. tostring(rec.dateLabel or format_date_key(rec.dateKey) or rec.dateKey or "N/A")
     lines[#lines + 1] = string.format("FRD=%s FGD=%s TradeDay=%s", yn(rec.isFrd), yn(rec.isFgd), yn(rec.isTradeDay))
     lines[#lines + 1] = fmt_daily("Max Rectangle Height ATR", rectangleHeightAtr)
     lines[#lines + 1] = fmt_daily("Pump/Dump ATR Mult", pumpDumpAtrMult)
