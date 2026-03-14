@@ -29,6 +29,7 @@ function Init()
     indicator.parameters:addDouble("eventAtrMult", "Event ATR Mult", "", 0.6)
     indicator.parameters:addDouble("eventCloseExtreme", "Event Close Extreme", "", 0.7)
     indicator.parameters:addDouble("reclaimRatioMin", "Reclaim Ratio Min", "", 0.5)
+    indicator.parameters:addBoolean("reportdailyonly", "Report Daily Only (first bar)", "", true)
     indicator.parameters:addInteger("qualityscoremin", "Quality Min Score For +", "", 4)
     indicator.parameters:addBoolean("showqualityaudit", "Show Quality Audit", "", false)
     indicator.parameters:addBoolean("showauditpanel", "Show Audit Panel", "", false)
@@ -1543,33 +1544,30 @@ function Update(period, mode)
     local reportPrevRangeAtr = safe_div(d.prevRange, d.prevAtr)
     local reportEventRangeAtr = safe_div(d.eventRange, d.eventAtr)
 
-    local reclaimRatioSelected = nil
+    local reclaimRatioSelected = 0
     if d.isFrd or d.basicFrd or (d.prevIsPump and d.eventDown) then
-        reclaimRatioSelected = d.reclaimRatioFrd
+        reclaimRatioSelected = d.reclaimRatioFrd or 0
     elseif d.isFgd or d.basicFgd or (d.prevIsDump and d.eventUp) then
-        reclaimRatioSelected = d.reclaimRatioFgd
-    else
-        local frdRatio = tonumber(d.reclaimRatioFrd)
-        local fgdRatio = tonumber(d.reclaimRatioFgd)
-        if frdRatio ~= nil and fgdRatio ~= nil then
-            reclaimRatioSelected = math.max(frdRatio, fgdRatio)
-        else
-            reclaimRatioSelected = frdRatio or fgdRatio or 0
-        end
+        reclaimRatioSelected = d.reclaimRatioFgd or 0
     end
 
-    T.reportDateKey[period] = d.dateKey or 0
-    T.reportFrd[period] = d.isFrd and 1 or 0
-    T.reportFgd[period] = d.isFgd and 1 or 0
-    T.reportTradeDay[period] = d.isTradeDay and 1 or 0
-    T.reportMaxRectAtr[period] = reportMaxRectAtr
-    T.reportPumpDumpAtr[period] = reportPrevRangeAtr
-    T.reportImpulseAtr[period] = reportPrevRangeAtr
-    T.reportImpulseCloseExtreme[period] = d.prevClv or 0
-    T.reportImpulseBodyRatioMin[period] = d.prevBodyRatio or 0
-    T.reportEventAtr[period] = reportEventRangeAtr
-    T.reportEventCloseExtreme[period] = d.eventClv or 0
-    T.reportReclaimRatioMin[period] = reclaimRatioSelected or 0
+    local shouldEmitReport = true
+    if instance.parameters.reportdailyonly then
+        shouldEmitReport = IsNewTradingDay(period)
+    end
+
+    T.reportDateKey[period] = shouldEmitReport and (d.dateKey or 0) or 0
+    T.reportFrd[period] = shouldEmitReport and (d.isFrd and 1 or 0) or 0
+    T.reportFgd[period] = shouldEmitReport and (d.isFgd and 1 or 0) or 0
+    T.reportTradeDay[period] = shouldEmitReport and (d.isTradeDay and 1 or 0) or 0
+    T.reportMaxRectAtr[period] = shouldEmitReport and reportMaxRectAtr or 0
+    T.reportPumpDumpAtr[period] = shouldEmitReport and reportPrevRangeAtr or 0
+    T.reportImpulseAtr[period] = shouldEmitReport and reportPrevRangeAtr or 0
+    T.reportImpulseCloseExtreme[period] = shouldEmitReport and (d.prevClv or 0) or 0
+    T.reportImpulseBodyRatioMin[period] = shouldEmitReport and (d.prevBodyRatio or 0) or 0
+    T.reportEventAtr[period] = shouldEmitReport and reportEventRangeAtr or 0
+    T.reportEventCloseExtreme[period] = shouldEmitReport and (d.eventClv or 0) or 0
+    T.reportReclaimRatioMin[period] = shouldEmitReport and (reclaimRatioSelected or 0) or 0
 
     if instance.parameters.fullaudit and d.dateKey ~= nil and d.dateKey ~= S.lastFullAuditDayKey then
         emit_full_audit(d1_idx)

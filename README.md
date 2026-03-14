@@ -97,7 +97,8 @@
 - `report_impulse_body_ratio_min`（每日值：`prevBodyRatio`）
 - `report_event_atr_mult`（每日值：`eventRange / eventAtr`）
 - `report_event_close_extreme`（每日值：`eventClv`）
-- `report_reclaim_ratio_min`（每日值：優先依 FRD/FGD/方向選 `reclaimRatioFrd/Fgd`，無明確事件時 fallback）
+- `report_reclaim_ratio_min`（每日值：優先依 FRD/FGD/方向選 `reclaimRatioFrd/Fgd`，無明確事件時為 `0`）
+- `reportdailyonly` 參數：預設 `true`，只在每日第一根 bar 輸出 `report_*` 欄位（其餘 bar 為 0，便於 daily 匯出）
 
 ## 4.1) DayType 可視化輸出（顯示層規格）
 - 顯示層已改為 owner-draw（`Prepare()` 內 `instance:ownerDrawn(true)`，`Draw(stage, context)` 在 `stage == 2` 繪製）
