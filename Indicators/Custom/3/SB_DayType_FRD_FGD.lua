@@ -849,6 +849,27 @@ local function format_date_key(dateKey)
     return tostring(dateKey)
 end
 
+local function is_weekend_timestamp(ts)
+    if ts == nil or core == nil or type(core.dateToTable) ~= "function" then return false end
+    local ok, t = pcall(core.dateToTable, ts)
+    if not ok or type(t) ~= "table" then return false end
+    return t.wday == 1 or t.wday == 7
+end
+
+local function find_prev_effective_trading_day_idx(day_idx)
+    if S.d1 == nil or day_idx == nil then return nil end
+    local first = S.d1:first()
+    local idx = day_idx - 1
+    while idx >= first do
+        local ts = S.d1:date(idx)
+        if ts ~= nil and not is_weekend_timestamp(ts) then
+            return idx
+        end
+        idx = idx - 1
+    end
+    return nil
+end
+
 local function calc_atr(history, idx, len)
     if history == nil or idx == nil or len == nil or len <= 0 then return nil end
     local start = idx - len + 1
@@ -1008,7 +1029,8 @@ build_day_record = function(day_idx)
     local eventCloseExtreme = tonumber(instance.parameters.eventCloseExtreme) or 0.7
     local reclaimRatioMin = tonumber(instance.parameters.reclaimRatioMin) or 0.5
 
-    local prev_idx = day_idx - 1
+    local prev_idx = find_prev_effective_trading_day_idx(day_idx)
+    if prev_idx == nil then return nil end
     local eventOpen, eventHigh, eventLow, eventClose = S.d1.open[day_idx], S.d1.high[day_idx], S.d1.low[day_idx], S.d1.close[day_idx]
     local prevOpen, prevHigh, prevLow, prevClose = S.d1.open[prev_idx], S.d1.high[prev_idx], S.d1.low[prev_idx], S.d1.close[prev_idx]
 
@@ -1074,8 +1096,8 @@ build_day_record = function(day_idx)
     local isFgdEvent = basicFgd
     local isFrdEvent = basicFrd
 
-    -- Layer D: Next Trading Day Trade Day (D1 history already excludes weekend sessions)
-    local prev_rec = (day_idx - 1 >= S.d1:first()) and build_day_record(day_idx - 1) or nil
+    -- Layer D: Next Trading Day Trade Day (weekend/non-effective D1 rows are skipped)
+    local prev_rec = prev_idx ~= nil and build_day_record(prev_idx) or nil
     local prevWasEvent = prev_rec ~= nil and (prev_rec.basicFrd or prev_rec.basicFgd)
     local isTradeDay = (not isFrdEvent) and (not isFgdEvent) and prevWasEvent
     local isFrdTradeCandidate = isTradeDay and prev_rec ~= nil and prev_rec.basicFrd
