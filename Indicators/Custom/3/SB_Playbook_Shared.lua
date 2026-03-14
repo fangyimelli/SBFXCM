@@ -48,17 +48,65 @@ function M.is_near_window_open(ts, timeframe_minutes)
     return false
 end
 
-function M.find_history_index_by_time(history, ts)
+function M.find_history_index_by_time(history, ts, cache)
     if history == nil or ts == nil then return nil end
-    local i = history:first()
+    local first = history:first()
     local last = history:size() - 1
-    local found = nil
-    while i <= last do
-        local d = history:date(i)
-        if d <= ts then found = i else break end
-        i = i + 1
+    if first > last then return nil end
+
+    if cache ~= nil then
+        if cache.history ~= history or cache.first ~= first or cache.last_size ~= history:size() then
+            cache.last_index = nil
+            cache.last_ts = nil
+            cache.history = history
+            cache.first = first
+            cache.last_size = history:size()
+        end
     end
-    return found
+
+    local i = first
+    local steps = 0
+    if cache ~= nil and cache.last_index ~= nil then
+        i = cache.last_index
+        if i < first then i = first end
+        if i > last then i = last end
+    end
+
+    if history:date(i) <= ts then
+        while i < last and history:date(i + 1) <= ts do
+            i = i + 1
+            steps = steps + 1
+        end
+        if cache ~= nil then
+            cache.last_index = i
+            cache.last_ts = ts
+            cache.calls = (cache.calls or 0) + 1
+            cache.scan_bars = (cache.scan_bars or 0) + steps
+        end
+        return i
+    end
+
+    while i >= first and history:date(i) > ts do
+        i = i - 1
+        steps = steps + 1
+    end
+    if i < first then
+        if cache ~= nil then
+            cache.last_index = first
+            cache.last_ts = ts
+            cache.calls = (cache.calls or 0) + 1
+            cache.scan_bars = (cache.scan_bars or 0) + steps
+        end
+        return nil
+    end
+
+    if cache ~= nil then
+        cache.last_index = i
+        cache.last_ts = ts
+        cache.calls = (cache.calls or 0) + 1
+        cache.scan_bars = (cache.scan_bars or 0) + steps
+    end
+    return i
 end
 
 function M.calc_atr(history, idx, len)
@@ -101,7 +149,7 @@ function M.evaluate_daytype(d1, day_idx)
     }
 end
 
-function M.eval_rectangle(d1, m15, d1_idx, params)
+function M.eval_rectangle(d1, m15, d1_idx, params, runtime_cache)
     if d1 == nil or m15 == nil or d1_idx == nil then return {valid=false, bar_count=0} end
     local p = params or {}
     local lookback = math.max(1, p.rectangle_lookback_bars or 8)
@@ -110,12 +158,42 @@ function M.eval_rectangle(d1, m15, d1_idx, params)
     local dayatrlen = p.dayatrlen or 14
 
     local dayStart = M.day_key(d1:date(d1_idx))
-    local bars = {}
-    local i = m15:first()
-    local last = m15:size() - 1
-    while i <= last do
-        if M.day_key(m15:date(i)) == dayStart then table.insert(bars, i) end
-        i = i + 1
+    local cache = runtime_cache
+    if cache ~= nil and (cache.history ~= m15 or cache.first ~= m15:first()) then
+        cache.history = m15
+        cache.first = m15:first()
+        cache.scanned_until = nil
+        cache.bars_by_day = {}
+    end
+
+    local bars = nil
+    if cache == nil then
+        bars = {}
+        local i = m15:first()
+        local last = m15:size() - 1
+        while i <= last do
+            if M.day_key(m15:date(i)) == dayStart then table.insert(bars, i) end
+            i = i + 1
+        end
+    else
+        if cache.bars_by_day == nil then cache.bars_by_day = {} end
+        local last = m15:size() - 1
+        local i = cache.scanned_until ~= nil and (cache.scanned_until + 1) or m15:first()
+        if i < m15:first() then i = m15:first() end
+        while i <= last do
+            local k = M.day_key(m15:date(i))
+            local dayBars = cache.bars_by_day[k]
+            if dayBars == nil then
+                dayBars = {}
+                cache.bars_by_day[k] = dayBars
+            end
+            dayBars[#dayBars + 1] = i
+            cache.rect_scan_bars = (cache.rect_scan_bars or 0) + 1
+            i = i + 1
+        end
+        cache.scanned_until = last
+        cache.rect_calls = (cache.rect_calls or 0) + 1
+        bars = cache.bars_by_day[dayStart] or {}
     end
 
     if #bars < lookback then return {valid=false, bar_count=#bars} end
@@ -157,7 +235,7 @@ function M.eval_rectangle(d1, m15, d1_idx, params)
     }
 end
 
-function M.build_daytype_record(d1, m15, day_idx, params, day_cache)
+function M.build_daytype_record(d1, m15, day_idx, params, day_cache, runtime_cache)
     if d1 == nil or day_idx == nil then return nil end
     local cache = day_cache or {}
     if cache[day_idx] ~= nil then return cache[day_idx] end
@@ -165,7 +243,7 @@ function M.build_daytype_record(d1, m15, day_idx, params, day_cache)
     local base = M.evaluate_daytype(d1, day_idx)
     if base == nil then return nil end
     local p = params or {}
-    local rect = M.eval_rectangle(d1, m15, day_idx, p)
+    local rect = M.eval_rectangle(d1, m15, day_idx, p, runtime_cache and runtime_cache.rectangle)
 
     local prevBase = M.evaluate_daytype(d1, day_idx - 1)
     local todayOpen, todayClose = d1.open[day_idx], d1.close[day_idx]
@@ -175,7 +253,7 @@ function M.build_daytype_record(d1, m15, day_idx, params, day_cache)
 
     local prev = cache[day_idx - 1]
     if prev == nil and day_idx - 1 >= d1:first() then
-        prev = M.build_daytype_record(d1, m15, day_idx - 1, p, cache)
+        prev = M.build_daytype_record(d1, m15, day_idx - 1, p, cache, runtime_cache)
     end
     local isFrdTradeCandidate = prev ~= nil and prev.is_frd_event_day
     local isFgdTradeCandidate = prev ~= nil and prev.is_fgd_event_day
@@ -233,7 +311,11 @@ function M.build_daytype_record(d1, m15, day_idx, params, day_cache)
         consolidation_score = consolidationScore,
         three_levels_score = threeLevels,
         event_score = consolidationScore + threeLevels,
-        trade_day_score = (isFrdTradeCandidate or isFgdTradeCandidate) and (consolidationScore + 1) or 0
+        trade_day_score = (isFrdTradeCandidate or isFgdTradeCandidate) and (consolidationScore + 1) or 0,
+        debug_index_calls = (runtime_cache and runtime_cache.index and runtime_cache.index.calls) or 0,
+        debug_index_scan_bars = (runtime_cache and runtime_cache.index and runtime_cache.index.scan_bars) or 0,
+        debug_rectangle_calls = (runtime_cache and runtime_cache.rectangle and runtime_cache.rectangle.rect_calls) or 0,
+        debug_rectangle_scan_bars = (runtime_cache and runtime_cache.rectangle and runtime_cache.rectangle.rect_scan_bars) or 0
     }
 
     cache[day_idx] = rec
@@ -272,6 +354,7 @@ function M.update_structure_state(runtime, source, m15, period, params)
         runtime.day_key = k
         runtime.asia_high = nil
         runtime.asia_low = nil
+        runtime.index_cache = {}
     end
 
     if M.is_in_asia_window(ts) then
@@ -284,7 +367,8 @@ function M.update_structure_state(runtime, source, m15, period, params)
     local sweepUp = hasAsia and source.high[period] > runtime.asia_high and source.close[period] < runtime.asia_high
     local sweepDown = hasAsia and source.low[period] < runtime.asia_low and source.close[period] > runtime.asia_low
 
-    local idx15 = M.find_history_index_by_time(m15, ts)
+    if runtime.index_cache == nil then runtime.index_cache = {} end
+    local idx15 = M.find_history_index_by_time(m15, ts, runtime.index_cache)
     local hasBos = false
     if idx15 ~= nil then
         local pivotPos = idx15 - 2
@@ -301,6 +385,16 @@ function M.update_structure_state(runtime, source, m15, period, params)
         has_session_sweep = sweepUp or sweepDown,
         has_bos = hasBos
     }
+end
+
+function M.handle_day_rollover(runtime, ts)
+    if runtime == nil or ts == nil then return end
+    local day = M.day_key(ts)
+    if runtime.day_key == nil or runtime.day_key ~= day then
+        runtime.day_key = day
+        runtime.index_cache = {}
+        runtime.rectangle = {}
+    end
 end
 
 return M

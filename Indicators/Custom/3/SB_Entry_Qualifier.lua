@@ -43,7 +43,7 @@ end
 
 load_shared_with_fallbacks()
 
-local S={source=nil,first=nil,m15=nil,d1=nil,ema=nil,day_cache={},structure_runtime={day_key=nil,asia_high=nil,asia_low=nil},frd_entry_idx=nil,fgd_entry_idx=nil}
+local S={source=nil,first=nil,m15=nil,d1=nil,ema=nil,day_cache={},daytype_runtime={day_key=nil,index={},rectangle={}},structure_runtime={day_key=nil,asia_high=nil,asia_low=nil,index_cache={}},frd_entry_idx=nil,fgd_entry_idx=nil}
 local T={}
 
 function Init()
@@ -72,7 +72,7 @@ local function dayrecord(idx)
         rectangle_min_contained_closes=6,
         max_rectangle_height_atr=1.2,
         dayatrlen=14
-    }, S.day_cache)
+    }, S.day_cache, S.daytype_runtime)
 end
 
 function Prepare(nameOnly)
@@ -133,7 +133,12 @@ function Update(period, mode)
     if S.ema~=nil then S.ema:update(mode) end
 
     local ts=S.source:date(period)
-    local d1idx=shared.find_history_index_by_time(S.d1, ts)
+    shared.handle_day_rollover(S.daytype_runtime, ts)
+    if S.daytype_runtime.day_cache_key ~= S.daytype_runtime.day_key then
+        S.daytype_runtime.day_cache_key = S.daytype_runtime.day_key
+        S.day_cache = {}
+    end
+    local d1idx=shared.find_history_index_by_time(S.d1, ts, S.daytype_runtime.index)
     local d=dayrecord(d1idx)
     local structure=shared.update_structure_state(S.structure_runtime, S.source, S.m15, period, {bosleft=2, bosright=2})
 
