@@ -189,6 +189,13 @@ local function request_owner_draw_refresh(period, dayRecord)
     end
 end
 
+local function safe_div(num, den)
+    local n = tonumber(num)
+    local d = tonumber(den)
+    if n == nil or d == nil or d == 0 then return 0 end
+    return n / d
+end
+
 local function clamp_positive(v, fallback)
     local n = tonumber(v)
     if n == nil or n <= 0 then return fallback end
@@ -1297,6 +1304,20 @@ function Prepare(nameOnly)
     T.repeatedDumpScore = instance:addStream("repeated_dump_score", core.Line, "Repeated Dump Score", "", core.rgb(205,92,92), S.first)
     T.consolidationScore = instance:addStream("consolidation_score", core.Line, "Consolidation Score", "", core.rgb(100,149,237), S.first)
     T.threeLevelsScore = instance:addStream("three_levels_score", core.Line, "Three Levels Score", "", core.rgb(255,160,122), S.first)
+
+    -- Full report streams for CSV/Excel export (daily date/event flags + parameter snapshot).
+    T.reportDateKey = instance:addStream("report_date_key", core.Line, "Report Date Key", "", core.rgb(176,196,222), S.first)
+    T.reportFrd = instance:addStream("report_is_frd", core.Line, "Report FRD", "", core.rgb(220,20,60), S.first)
+    T.reportFgd = instance:addStream("report_is_fgd", core.Line, "Report FGD", "", core.rgb(0,180,0), S.first)
+    T.reportTradeDay = instance:addStream("report_is_trade_day", core.Line, "Report Trade Day", "", core.rgb(255,215,0), S.first)
+    T.reportMaxRectAtr = instance:addStream("report_max_rectangle_height_atr", core.Line, "Report Max Rectangle Height ATR", "", core.rgb(135,206,250), S.first)
+    T.reportPumpDumpAtr = instance:addStream("report_pump_dump_atr_mult", core.Line, "Report Pump Dump ATR Mult", "", core.rgb(30,160,30), S.first)
+    T.reportImpulseAtr = instance:addStream("report_impulse_atr_mult", core.Line, "Report Impulse ATR Mult", "", core.rgb(123,104,238), S.first)
+    T.reportImpulseCloseExtreme = instance:addStream("report_impulse_close_extreme", core.Line, "Report Impulse Close Extreme", "", core.rgb(72,61,139), S.first)
+    T.reportImpulseBodyRatioMin = instance:addStream("report_impulse_body_ratio_min", core.Line, "Report Impulse Body Ratio Min", "", core.rgb(65,105,225), S.first)
+    T.reportEventAtr = instance:addStream("report_event_atr_mult", core.Line, "Report Event ATR Mult", "", core.rgb(218,112,214), S.first)
+    T.reportEventCloseExtreme = instance:addStream("report_event_close_extreme", core.Line, "Report Event Close Extreme", "", core.rgb(199,21,133), S.first)
+    T.reportReclaimRatioMin = instance:addStream("report_reclaim_ratio_min", core.Line, "Report Reclaim Ratio Min", "", core.rgb(255,140,0), S.first)
 end
 
 function Draw(stage, context)
@@ -1439,6 +1460,18 @@ function Update(period, mode)
         T.repeatedDumpScore[period] = 0
         T.consolidationScore[period] = 0
         T.threeLevelsScore[period] = 0
+        T.reportDateKey[period] = 0
+        T.reportFrd[period] = 0
+        T.reportFgd[period] = 0
+        T.reportTradeDay[period] = 0
+        T.reportMaxRectAtr[period] = 0
+        T.reportPumpDumpAtr[period] = 0
+        T.reportImpulseAtr[period] = 0
+        T.reportImpulseCloseExtreme[period] = 0
+        T.reportImpulseBodyRatioMin[period] = 0
+        T.reportEventAtr[period] = 0
+        T.reportEventCloseExtreme[period] = 0
+        T.reportReclaimRatioMin[period] = 0
         return
     end
 
@@ -1479,6 +1512,38 @@ function Update(period, mode)
     T.repeatedDumpScore[period] = d.repeated_dump_score or 0
     T.consolidationScore[period] = d.consolidation_score or 0
     T.threeLevelsScore[period] = d.three_levels_score or 0
+
+    local reportMaxRectAtr = safe_div(d.rectangle_height, d.eventAtr)
+    local reportPrevRangeAtr = safe_div(d.prevRange, d.prevAtr)
+    local reportEventRangeAtr = safe_div(d.eventRange, d.eventAtr)
+
+    local reclaimRatioSelected = nil
+    if d.isFrd or d.basicFrd or (d.prevIsPump and d.eventDown) then
+        reclaimRatioSelected = d.reclaimRatioFrd
+    elseif d.isFgd or d.basicFgd or (d.prevIsDump and d.eventUp) then
+        reclaimRatioSelected = d.reclaimRatioFgd
+    else
+        local frdRatio = tonumber(d.reclaimRatioFrd)
+        local fgdRatio = tonumber(d.reclaimRatioFgd)
+        if frdRatio ~= nil and fgdRatio ~= nil then
+            reclaimRatioSelected = math.max(frdRatio, fgdRatio)
+        else
+            reclaimRatioSelected = frdRatio or fgdRatio or 0
+        end
+    end
+
+    T.reportDateKey[period] = d.dateKey or 0
+    T.reportFrd[period] = d.isFrd and 1 or 0
+    T.reportFgd[period] = d.isFgd and 1 or 0
+    T.reportTradeDay[period] = d.isTradeDay and 1 or 0
+    T.reportMaxRectAtr[period] = reportMaxRectAtr
+    T.reportPumpDumpAtr[period] = reportPrevRangeAtr
+    T.reportImpulseAtr[period] = reportPrevRangeAtr
+    T.reportImpulseCloseExtreme[period] = d.prevClv or 0
+    T.reportImpulseBodyRatioMin[period] = d.prevBodyRatio or 0
+    T.reportEventAtr[period] = reportEventRangeAtr
+    T.reportEventCloseExtreme[period] = d.eventClv or 0
+    T.reportReclaimRatioMin[period] = reclaimRatioSelected or 0
 
     if instance.parameters.fullaudit and d.dateKey ~= nil and d.dateKey ~= S.lastFullAuditDayKey then
         emit_full_audit(d1_idx)
