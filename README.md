@@ -222,7 +222,20 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 
 ---
 
+
 ## 10) 後續維護規則（強制）
+
+## 10.1) SB_Structure_Engine profile 建議使用情境
+
+`Indicators/Custom/3/SB_Structure_Engine.lua` 的 `simplemode=true` 可直接用 profile 套餐，不需要逐項調參：
+
+- `default`：一般盤勢的基準設定。想先穩定觀察 BIS / Session 行為，先用這個。
+- `tight`：偏保守，要求較長整理與較小漂移。適合波動較亂、想降低誤判時。
+- `loose`：偏寬鬆，較快接受整理成立。適合波動放大、希望更快捕捉結構轉折時。
+
+若你已熟悉參數意義，可關閉 `simplemode` 走 advanced mode，手動調整：
+`consolidationminbars`、`consolidationstalebars`、`atrlen`、`maxconsolidationatrmult`、`maxdriftratio`。
+
 
 後續只要修改任一 indicator，README 必須同步更新：
 - 實際新增了什麼
@@ -382,13 +395,13 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 
 | 模式 | 主要對外參數 | Consolidation 參數來源 | DayType fallback 行為 | 適用情境 |
 | --- | --- | --- | --- | --- |
-| 簡化模式（`simplemode=true`，預設） | `profile`、`requiretradeday`、`allow_render_when_upstream_missing` | 依 `profile` 套用預設（Conservative / Default / Aggressive） | 不讀取 `manualoverride/upstream*`；優先用 DayType stream，缺線時可透過 `allow_render_when_upstream_missing` 放行 | 想快速掛上即用，不手調細項 |
+| 簡化模式（`simplemode=true`，預設） | `profile`、`requiretradeday`、`allow_render_when_upstream_missing` | 依 `profile` 套用預設（Tight / Default / Loose） | 不讀取 `manualoverride/upstream*`；優先用 DayType stream，缺線時可透過 `allow_render_when_upstream_missing` 放行 | 想快速掛上即用，不手調細項 |
 | 進階模式（`simplemode=false`） | 上述 + `consolidationminbars/atrlen/maxconsolidationatrmult/maxdriftratio/consolidationstalebars/manualoverride/upstream*` | 直接使用使用者填入的進階參數 | 可啟用 `manualoverride=true` 強制採用 `upstream*` 手動值 | 回測/特定商品需要微調行為 |
 
 `profile` 對應預設如下（僅 `simplemode=true` 生效）：
-- `Conservative`: `minbars=10`, `stalebars=4`, `atrlen=21`, `maxAtrMult=0.8`, `maxdriftratio=0.30`
+- `Tight`: `minbars=10`, `stalebars=4`, `atrlen=21`, `maxAtrMult=0.8`, `maxdriftratio=0.30`
 - `Default`: `minbars=8`, `stalebars=3`, `atrlen=14`, `maxAtrMult=1.0`, `maxdriftratio=0.45`
-- `Aggressive`: `minbars=6`, `stalebars=2`, `atrlen=10`, `maxAtrMult=1.2`, `maxdriftratio=0.60`
+- `Loose`: `minbars=6`, `stalebars=2`, `atrlen=10`, `maxAtrMult=1.2`, `maxdriftratio=0.60`
 
 ### Consolidation 判定（程式化）
 - 建立最小 bars 視窗（預設 8）
