@@ -52,6 +52,10 @@ local S = {
         gate = {
             hasUpstream = false,
             upstreamTradeDay = nil
+        },
+        debug = {
+            hasCandidate = false,
+            candidateRange = nil
         }
     }
 }
@@ -137,6 +141,35 @@ local function createChannelGroup(name, color, alpha)
     return group
 end
 
+local function addInternalBandStream(id, title, first, color)
+    if type(instance.addInternalStream) == "function" then
+        local ok, stream = pcall(function()
+            return instance:addInternalStream(id, core.Line, title, "", color, first)
+        end)
+        if ok and stream ~= nil then return stream end
+    end
+    return instance:addStream(id, core.Line, title, "", color, first)
+end
+
+local function bindChannelGroup(group, upper, lower)
+    if group == nil or upper == nil or lower == nil then return false end
+
+    local attempts = {
+        function() group:addStream(upper, lower) end,
+        function() group:addStream(upper) group:addStream(lower) end,
+        function() group:setStreams(upper, lower) end,
+        function() group:setStream(upper, lower) end,
+        function() group:setStream(1, upper) group:setStream(2, lower) end,
+        function() group.upper = upper group.lower = lower end
+    }
+
+    for _, attempt in ipairs(attempts) do
+        local ok = pcall(attempt)
+        if ok then return true end
+    end
+    return false
+end
+
 local function minuteOfDay(ts)
     if ts == nil then return nil end
     local f = ts - math.floor(ts)
@@ -144,6 +177,14 @@ local function minuteOfDay(ts)
     local m = math.floor(f * 1440 + 0.000001)
     if m < 0 then m = 0 elseif m > 1439 then m = 1439 end
     return m
+end
+
+local function isLastVisiblePeriod(period)
+    if S.source ~= nil and type(S.source.size) == "function" then
+        local last = S.source:size() - 1
+        return period >= last
+    end
+    return true
 end
 
 local function inBisWindow(ts)
@@ -261,6 +302,8 @@ local function detectConsolidation(period, canRender)
     local trendLimit = math.max(0.05, math.min(1.0, params.maxdriftratio))
 
     local candidate = findConsolidationCandidate(src, period, minBars, atrLen, maxAtrMult, trendLimit)
+    st.debug.hasCandidate = candidate ~= nil
+    st.debug.candidateRange = candidate and candidate.range or nil
 
     if con.active and not con.brokenDown then
         local brokeUp = src.close[period] > con.high
@@ -366,7 +409,7 @@ local function updateSession(period, canRender)
     end
 end
 
-local function render(period, canRender)
+local function render(period, canRender, mode)
     local src = S.source
     local st = S.state
     local con = st.consolidation
@@ -376,6 +419,8 @@ local function render(period, canRender)
 
     T.consolidationHigh[period] = nil
     T.consolidationLow[period] = nil
+    T.consolidationHighBand[period] = nil
+    T.consolidationLowBand[period] = nil
     T.sessionHigh[period] = nil
     T.sessionLow[period] = nil
     T.sessionMid[period] = nil
@@ -430,9 +475,16 @@ local function render(period, canRender)
         disp.consLow = con.low
     end
 
-    if disp.consStartBar ~= nil and disp.consEndBar ~= nil and disp.consHigh ~= nil and disp.consLow ~= nil and period >= disp.consStartBar and period <= disp.consEndBar then
+    if con.active and disp.consHigh ~= nil and disp.consLow ~= nil then
         T.consolidationHigh[period] = disp.consHigh
         T.consolidationLow[period] = disp.consLow
+        T.consolidationHighBand[period] = disp.consHigh
+        T.consolidationLowBand[period] = disp.consLow
+    else
+        T.consolidationHigh[period] = nil
+        T.consolidationLow[period] = nil
+        T.consolidationHighBand[period] = nil
+        T.consolidationLowBand[period] = nil
     end
 
     if sess.active and sess.startBar ~= nil then
@@ -477,9 +529,19 @@ local function render(period, canRender)
         disp.sessionLowShown = true
     end
 
-    if instance.parameters.debug then
-        local reason = st.gate.bisBlockReason or "PASS"
-        safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, "GATE: " .. reason)
+    if instance.parameters.debug and isLastVisiblePeriod(period) then
+        local reason = st.gate.bisBlockReason or st.bisBlockReason or "PASS"
+        local consState = con.active and "CONS: ACTIVE" or "CONS: IDLE"
+        local candidateState = st.debug.hasCandidate and "CAND: YES" or "CAND: NO"
+        local consRange = ""
+        if con.high ~= nil and con.low ~= nil then
+            consRange = string.format(" [%.5f - %.5f]", con.low, con.high)
+        end
+        local candRange = ""
+        if st.debug.candidateRange ~= nil then
+            candRange = string.format(" | CAND_R: %.5f", st.debug.candidateRange)
+        end
+        safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, "GATE: " .. reason .. " | " .. consState .. consRange .. " | " .. candidateState .. candRange)
     end
 end
 
@@ -505,6 +567,8 @@ function Init()
     p:addInteger("atrlen", "ATR Length", "", 14)
     p:addDouble("maxconsolidationatrmult", "Max Consolidation Range ATR Mult", "", 1.0)
     p:addDouble("maxdriftratio", "Max Consolidation Drift Ratio", "", 0.45)
+    p:addColor("conscolor", "Consolidation Channel Color", "", core.rgb(138, 43, 226))
+    p:addInteger("consfillalpha", "Consolidation Fill Alpha", "", 45)
 
     p:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
     p:addBoolean("istradeday", "Is Trade Day", "", true)
@@ -539,8 +603,10 @@ function Prepare(nameOnly)
     instance:name(profile:id() .. "(" .. S.source:name() .. ")")
     if nameOnly then return end
 
-    T.consolidationHigh = instance:addStream("consolidation_high", core.Line, "Consolidation High", "", core.rgb(205, 205, 205), S.first)
-    T.consolidationLow = instance:addStream("consolidation_low", core.Line, "Consolidation Low", "", core.rgb(205, 205, 205), S.first)
+    T.consolidationHigh = instance:addStream("consolidation_high", core.Line, "Consolidation High", "", instance.parameters.conscolor, S.first)
+    T.consolidationLow = instance:addStream("consolidation_low", core.Line, "Consolidation Low", "", instance.parameters.conscolor, S.first)
+    T.consolidationHighBand = addInternalBandStream("consolidation_high_band", "Consolidation High Band", S.first, instance.parameters.conscolor)
+    T.consolidationLowBand = addInternalBandStream("consolidation_low_band", "Consolidation Low Band", S.first, instance.parameters.conscolor)
     T.sessionHigh = instance:addStream("session_high", core.Line, "Session High", "", core.rgb(255, 215, 0), S.first)
     T.sessionLow = instance:addStream("session_low", core.Line, "Session Low", "", core.rgb(135, 206, 250), S.first)
     T.sessionMid = instance:addStream("session_mid", core.Line, "Session Mid", "", core.rgb(255, 255, 255), S.first)
@@ -563,7 +629,10 @@ function Prepare(nameOnly)
     O.txtDebug = instance:createTextOutput("", "SB_STRUCTURE_DEBUG", "Arial", 7, core.H_Left, core.V_Top, core.rgb(180, 180, 180), 0)
 
     S.state.display.session = createSessionDisplay(instance.parameters)
+    O.consolidationChannel = createChannelGroup("SB_CONSOLIDATION_CHANNEL", instance.parameters.conscolor, instance.parameters.consfillalpha)
+    bindChannelGroup(O.consolidationChannel, T.consolidationHighBand, T.consolidationLowBand)
     O.sessionChannel = createChannelGroup("SB_SESSION_CHANNEL", S.state.display.session.color, S.state.display.session.fillAlpha)
+    bindChannelGroup(O.sessionChannel, T.sessionHigh, T.sessionLow)
 end
 
 function Update(period, mode)
@@ -588,7 +657,7 @@ function Update(period, mode)
 
     detectConsolidation(period, canRenderStructure)
     updateSession(period, canRenderStructure)
-    render(period, canRenderStructure)
+    render(period, canRenderStructure, mode)
 end
 
 function ReleaseInstance() end
