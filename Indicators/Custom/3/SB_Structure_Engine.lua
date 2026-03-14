@@ -55,7 +55,8 @@ local S = {
         },
         debug = {
             hasCandidate = false,
-            candidateRange = nil
+            candidateRange = nil,
+            lastTextPeriod = nil
         }
     }
 }
@@ -185,6 +186,16 @@ local function isLastVisiblePeriod(period)
         return period >= last
     end
     return true
+end
+
+local function shouldRenderDebug(period, mode)
+    if not isLastVisiblePeriod(period) then return false end
+    if core ~= nil then
+        if core.UpdateLast ~= nil and mode == core.UpdateLast then return true end
+        if core.UpdateCurrent ~= nil and mode == core.UpdateCurrent then return true end
+        if core.UpdateNew ~= nil and mode == core.UpdateNew then return true end
+    end
+    return false
 end
 
 local function inBisWindow(ts)
@@ -529,7 +540,7 @@ local function render(period, canRender, mode)
         disp.sessionLowShown = true
     end
 
-    if instance.parameters.debug and isLastVisiblePeriod(period) then
+    if instance.parameters.debug and shouldRenderDebug(period, mode) then
         local reason = st.gate.bisBlockReason or st.bisBlockReason or "PASS"
         local consState = con.active and "CONS: ACTIVE" or "CONS: IDLE"
         local candidateState = st.debug.hasCandidate and "CAND: YES" or "CAND: NO"
@@ -541,7 +552,12 @@ local function render(period, canRender, mode)
         if st.debug.candidateRange ~= nil then
             candRange = string.format(" | CAND_R: %.5f", st.debug.candidateRange)
         end
+        if st.debug.lastTextPeriod ~= nil and st.debug.lastTextPeriod ~= period then
+            local prevLow = src.low[st.debug.lastTextPeriod] or src.low[period]
+            safeTextSet(O.txtDebug, st.debug.lastTextPeriod, prevLow - offset * 2, "")
+        end
         safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, "GATE: " .. reason .. " | " .. consState .. consRange .. " | " .. candidateState .. candRange)
+        st.debug.lastTextPeriod = period
     end
 end
 
