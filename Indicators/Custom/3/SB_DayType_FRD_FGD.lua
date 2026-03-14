@@ -351,26 +351,52 @@ local function build_audit_panel_lines(lastDayIdx)
     if not instance.parameters.debug or not instance.parameters.showauditpanel then return {} end
     if lastDayIdx == nil or S.d1 == nil then return {} end
 
-    local lookback = math.max(1, clamp_positive(instance.parameters.auditpanellookback, 8))
-    local first = math.max(S.d1:first() + 2, lastDayIdx - lookback + 1)
     local lines = {}
     local yn = function(v) return v and "Y" or "N" end
-    for i = first, lastDayIdx do
-        local rec = get_day_mark_by_idx(i)
-        if rec ~= nil and rec.dateLabel ~= nil then
-            lines[#lines + 1] = rec.dateLabel
-            lines[#lines + 1] = string.format("PrevPump=%s PrevDump=%s", yn(rec.prevIsPump), yn(rec.prevIsDump))
-            lines[#lines + 1] = string.format("EventUp=%s EventDown=%s", yn(rec.eventUp), yn(rec.eventDown))
-            lines[#lines + 1] = string.format("FRD=%s FGD=%s", yn(rec.isFrd), yn(rec.isFgd))
-            if rec.isTradeDay then
-                lines[#lines + 1] = string.format("TradeDay=Y (from %s)", tostring(rec.tradeFromRule or "N/A"))
-            else
-                lines[#lines + 1] = "TradeDay=N"
-            end
-            lines[#lines + 1] = string.format("Q=%d(%s)", tonumber(rec.qualityScore) or 0, rec.qualityGrade or "")
-            lines[#lines + 1] = ""
-        end
+    local rec = get_day_mark_by_idx(lastDayIdx)
+    if rec == nil then return lines end
+
+    local function fmt_daily(label, value)
+        if value == nil then return label .. ": N/A" end
+        return string.format("%s: %.4f", label, tonumber(value) or 0)
     end
+
+    local eventAtr = tonumber(rec.eventAtr)
+    local prevAtr = tonumber(rec.prevAtr)
+    local rectangleHeight = tonumber(rec.rectangle_height)
+    local prevRange = tonumber(rec.prevRange)
+    local eventRange = tonumber(rec.eventRange)
+    local prevBodyRatio = tonumber(rec.prevBodyRatio)
+    local eventClv = tonumber(rec.eventClv)
+    local reclaimRatioFrd = tonumber(rec.reclaimRatioFrd)
+    local reclaimRatioFgd = tonumber(rec.reclaimRatioFgd)
+    local reclaimRatio = nil
+    if rec.isFrd then
+        reclaimRatio = reclaimRatioFrd
+    elseif rec.isFgd then
+        reclaimRatio = reclaimRatioFgd
+    elseif reclaimRatioFrd ~= nil and reclaimRatioFgd ~= nil then
+        reclaimRatio = math.max(reclaimRatioFrd, reclaimRatioFgd)
+    else
+        reclaimRatio = reclaimRatioFrd or reclaimRatioFgd
+    end
+
+    local rectangleHeightAtr = (rectangleHeight ~= nil and eventAtr ~= nil and eventAtr > 0) and (rectangleHeight / eventAtr) or nil
+    local pumpDumpAtrMult = (prevRange ~= nil and prevAtr ~= nil and prevAtr > 0) and (prevRange / prevAtr) or nil
+    local impulseAtrMult = pumpDumpAtrMult
+    local eventAtrMult = (eventRange ~= nil and eventAtr ~= nil and eventAtr > 0) and (eventRange / eventAtr) or nil
+
+    lines[#lines + 1] = "Date=" .. tostring(rec.dateLabel or format_date_key(rec.dateKey) or rec.dateKey or "N/A")
+    lines[#lines + 1] = string.format("FRD=%s FGD=%s TradeDay=%s", yn(rec.isFrd), yn(rec.isFgd), yn(rec.isTradeDay))
+    lines[#lines + 1] = fmt_daily("Max Rectangle Height ATR", rectangleHeightAtr)
+    lines[#lines + 1] = fmt_daily("Pump/Dump ATR Mult", pumpDumpAtrMult)
+    lines[#lines + 1] = fmt_daily("Impulse ATR Mult", impulseAtrMult)
+    lines[#lines + 1] = fmt_daily("Impulse Close Extreme", rec.prevClv)
+    lines[#lines + 1] = fmt_daily("Impulse Body Ratio Min", prevBodyRatio)
+    lines[#lines + 1] = fmt_daily("Event ATR Mult", eventAtrMult)
+    lines[#lines + 1] = fmt_daily("Event Close Extreme", eventClv)
+    lines[#lines + 1] = fmt_daily("Reclaim Ratio Min", reclaimRatio)
+
     return lines
 end
 
