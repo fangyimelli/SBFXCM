@@ -189,6 +189,13 @@ local function request_owner_draw_refresh(period, dayRecord)
     end
 end
 
+local function safe_div(num, den)
+    local n = tonumber(num)
+    local d = tonumber(den)
+    if n == nil or d == nil or d == 0 then return 0 end
+    return n / d
+end
+
 local function clamp_positive(v, fallback)
     local n = tonumber(v)
     if n == nil or n <= 0 then return fallback end
@@ -1532,18 +1539,37 @@ function Update(period, mode)
     T.consolidationScore[period] = d.consolidation_score or 0
     T.threeLevelsScore[period] = d.three_levels_score or 0
 
+    local reportMaxRectAtr = safe_div(d.rectangle_height, d.eventAtr)
+    local reportPrevRangeAtr = safe_div(d.prevRange, d.prevAtr)
+    local reportEventRangeAtr = safe_div(d.eventRange, d.eventAtr)
+
+    local reclaimRatioSelected = nil
+    if d.isFrd or d.basicFrd or (d.prevIsPump and d.eventDown) then
+        reclaimRatioSelected = d.reclaimRatioFrd
+    elseif d.isFgd or d.basicFgd or (d.prevIsDump and d.eventUp) then
+        reclaimRatioSelected = d.reclaimRatioFgd
+    else
+        local frdRatio = tonumber(d.reclaimRatioFrd)
+        local fgdRatio = tonumber(d.reclaimRatioFgd)
+        if frdRatio ~= nil and fgdRatio ~= nil then
+            reclaimRatioSelected = math.max(frdRatio, fgdRatio)
+        else
+            reclaimRatioSelected = frdRatio or fgdRatio or 0
+        end
+    end
+
     T.reportDateKey[period] = d.dateKey or 0
     T.reportFrd[period] = d.isFrd and 1 or 0
     T.reportFgd[period] = d.isFgd and 1 or 0
     T.reportTradeDay[period] = d.isTradeDay and 1 or 0
-    T.reportMaxRectAtr[period] = instance.parameters.max_rectangle_height_atr
-    T.reportPumpDumpAtr[period] = instance.parameters.atr_mult
-    T.reportImpulseAtr[period] = instance.parameters.impulseAtrMult
-    T.reportImpulseCloseExtreme[period] = instance.parameters.impulseCloseExtreme
-    T.reportImpulseBodyRatioMin[period] = instance.parameters.impulseBodyRatioMin
-    T.reportEventAtr[period] = instance.parameters.eventAtrMult
-    T.reportEventCloseExtreme[period] = instance.parameters.eventCloseExtreme
-    T.reportReclaimRatioMin[period] = instance.parameters.reclaimRatioMin
+    T.reportMaxRectAtr[period] = reportMaxRectAtr
+    T.reportPumpDumpAtr[period] = reportPrevRangeAtr
+    T.reportImpulseAtr[period] = reportPrevRangeAtr
+    T.reportImpulseCloseExtreme[period] = d.prevClv or 0
+    T.reportImpulseBodyRatioMin[period] = d.prevBodyRatio or 0
+    T.reportEventAtr[period] = reportEventRangeAtr
+    T.reportEventCloseExtreme[period] = d.eventClv or 0
+    T.reportReclaimRatioMin[period] = reclaimRatioSelected or 0
 
     if instance.parameters.fullaudit and d.dateKey ~= nil and d.dateKey ~= S.lastFullAuditDayKey then
         emit_full_audit(d1_idx)
