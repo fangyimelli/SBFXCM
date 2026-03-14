@@ -344,26 +344,21 @@ local function build_audit_panel_lines(lastDayIdx)
     if not instance.parameters.debug or not instance.parameters.showauditpanel then return {} end
     if lastDayIdx == nil or S.d1 == nil then return {} end
 
-    local lookback = math.max(1, clamp_positive(instance.parameters.auditpanellookback, 8))
-    local first = math.max(S.d1:first() + 2, lastDayIdx - lookback + 1)
     local lines = {}
     local yn = function(v) return v and "Y" or "N" end
-    for i = first, lastDayIdx do
-        local rec = get_day_mark_by_idx(i)
-        if rec ~= nil and rec.dateLabel ~= nil then
-            lines[#lines + 1] = rec.dateLabel
-            lines[#lines + 1] = string.format("PrevPump=%s PrevDump=%s", yn(rec.prevIsPump), yn(rec.prevIsDump))
-            lines[#lines + 1] = string.format("EventUp=%s EventDown=%s", yn(rec.eventUp), yn(rec.eventDown))
-            lines[#lines + 1] = string.format("FRD=%s FGD=%s", yn(rec.isFrd), yn(rec.isFgd))
-            if rec.isTradeDay then
-                lines[#lines + 1] = string.format("TradeDay=Y (from %s)", tostring(rec.tradeFromRule or "N/A"))
-            else
-                lines[#lines + 1] = "TradeDay=N"
-            end
-            lines[#lines + 1] = string.format("Q=%d(%s)", tonumber(rec.qualityScore) or 0, rec.qualityGrade or "")
-            lines[#lines + 1] = ""
-        end
-    end
+    local rec = get_day_mark_by_idx(lastDayIdx)
+    if rec == nil then return lines end
+
+    lines[#lines + 1] = string.format("FRD=%s FGD=%s TradeDay=%s", yn(rec.isFrd), yn(rec.isFgd), yn(rec.isTradeDay))
+    lines[#lines + 1] = string.format("Max Rectangle Height ATR: %.4f", tonumber(instance.parameters.max_rectangle_height_atr) or 0)
+    lines[#lines + 1] = string.format("Pump/Dump ATR Mult: %.4f", tonumber(instance.parameters.atr_mult) or 0)
+    lines[#lines + 1] = string.format("Impulse ATR Mult: %.4f", tonumber(instance.parameters.impulseAtrMult) or 0)
+    lines[#lines + 1] = string.format("Impulse Close Extreme: %.4f", tonumber(instance.parameters.impulseCloseExtreme) or 0)
+    lines[#lines + 1] = string.format("Impulse Body Ratio Min: %.4f", tonumber(instance.parameters.impulseBodyRatioMin) or 0)
+    lines[#lines + 1] = string.format("Event ATR Mult: %.4f", tonumber(instance.parameters.eventAtrMult) or 0)
+    lines[#lines + 1] = string.format("Event Close Extreme: %.4f", tonumber(instance.parameters.eventCloseExtreme) or 0)
+    lines[#lines + 1] = string.format("Reclaim Ratio Min: %.4f", tonumber(instance.parameters.reclaimRatioMin) or 0)
+
     return lines
 end
 
