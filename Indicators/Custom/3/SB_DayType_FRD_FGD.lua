@@ -671,6 +671,11 @@ local function get_day_type_color(label)
     return instance.parameters.InactiveTextColor
 end
 
+local function is_frd_fgd_label(label)
+    if label == nil then return false end
+    return label == "FRD" or label == "FRD+" or label == "FGD" or label == "FGD+"
+end
+
 local function draw_text(context, fontId, text, color, x, y)
     if context == nil or fontId == nil or text == nil or text == "" or x == nil or y == nil then return end
 
@@ -1150,6 +1155,8 @@ build_day_record = function(day_idx)
         event_day_type = isFrdEvent and -1 or (isFgdEvent and 1 or 0),
         repeated_pump_score = prevIsPump and 1 or 0, repeated_dump_score = prevIsDump and 1 or 0, consolidation_score = rect.valid and 1 or 0, three_levels_score = 0,
 
+        supersededByOpposite = false,
+
         failReasons = {
             basic = {
                 prevRangeFail = not prevRangePass,
@@ -1176,6 +1183,16 @@ build_day_record = function(day_idx)
             }
         }
     }
+
+    if prev_rec ~= nil then
+        local supersededPrev = (isFrdEvent and prev_rec.isFgd) or (isFgdEvent and prev_rec.isFrd)
+        if supersededPrev then
+            prev_rec.supersededByOpposite = true
+            if prev_rec.dateKey ~= nil then
+                S.dayMarks[prev_rec.dateKey] = prev_rec
+            end
+        end
+    end
 
     local dateKey = rec.dateKey
     if dateKey ~= nil then
@@ -1305,7 +1322,22 @@ function Draw(stage, context)
                         for i = 1, #labels do
                             local label = labels[i]
                             local y = y1 + weekdayLineHeight + ((i - 1) * dayTypeLineHeight)
-                            draw_text(context, S.draw.dayTypeFont, label, get_day_type_color(label), x, y)
+                            local labelColor = get_day_type_color(label)
+                            local shouldStrike = d.supersededByOpposite and is_frd_fgd_label(label)
+                            if shouldStrike then
+                                labelColor = instance.parameters.InactiveTextColor or labelColor
+                            end
+                            draw_text(context, S.draw.dayTypeFont, label, labelColor, x, y)
+
+                            if shouldStrike then
+                                local textW, textH = measure_text(context, S.draw.dayTypeFont, label)
+                                local fallbackW = math.max(1, #tostring(label) * clamp_positive(instance.parameters.DayTypeFontSize, 10))
+                                local fallbackH = math.max(1, clamp_positive(instance.parameters.DayTypeFontSize, 10))
+                                local strikeW = math.max(1, tonumber(textW) or fallbackW)
+                                local strikeH = math.max(1, tonumber(textH) or fallbackH)
+                                local strikeY = y + math.floor(strikeH * 0.55)
+                                draw_line(context, S.draw.neutralPen, x, strikeY, x + strikeW, strikeY)
+                            end
                         end
 
                         local auditLines = build_audit_lines(d1_idx, d)

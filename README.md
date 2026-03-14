@@ -112,6 +112,9 @@ Label 顯示：
 - `Trade Day`（僅非 event 日）
 - `FRD?` / `FGD?`（當 near-miss 成立且 `ShowNearMissLabels=true`，且優先序低於 event / trade-day）
 
+刪除線語義：
+- 若某日 `FRD/FGD` label 出現刪除線，代表該事件被「次日相反事件」覆蓋（例如：昨日 FGD、今日 FRD，或昨日 FRD、今日 FGD）。
+
 Near-miss 可視化控制參數：
 - `ShowNearMissLabels`：是否顯示 `FRD?` / `FGD?`
 - `ShowNearMissReasons`：是否在 near-miss 後加上失敗原因，例如 `FRD?(Range)`、`FGD?(CLV/Reclaim)`
