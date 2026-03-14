@@ -368,3 +368,16 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 - Trade Day = true 且進入箱型：只見 consolidation 邊界與單一 `Consolidation` 文字。
 - 向下有效破位：只在觸發 K 棒看到一次 `BIS`。
 - BIS 之後：可持續看到 `Session High / Session Low` 更新。
+
+
+### 平台相容策略（Structure upstream 參數）
+- `SB_Structure_Engine.lua` 在 `Init()` 會先檢查 `indicator.parameters.addSource` 是否可用：
+  - 可用：註冊 `daytype_trade_day_stream/daytype_frd_event_stream/daytype_fgd_event_stream/daytype_bias_stream`（stream 直連模式）。
+  - 不可用：不註冊 `addSource` 類型參數，改走既有手動參數作為 fallback。
+- `Prepare()` 與 `Update()` 不再假設 upstream 一定是 stream handle，會先做型態/可索引檢查。
+- 若 upstream 不是可索引 stream（例如平台只提供基本參數型態），會自動 fallback 到：
+  - `upstreamistradeday`
+  - `upstreamisfrd`
+  - `upstreamisfgd`
+  - `upstreambias`
+- `manualoverride=true` 仍保留原本語意（強制手動值）；`manualoverride=false` 時若 stream 不可用，會自動採用 fallback 手動參數（平台相容模式）。

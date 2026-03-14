@@ -76,6 +76,22 @@ local function safeTextSet(out, period, price, text)
     out:set(period, price, text)
 end
 
+local function readStreamValue(stream, period)
+    if stream == nil or period == nil then return nil end
+    local ok, value = pcall(function()
+        return stream[period]
+    end)
+    if not ok then return nil end
+    return value
+end
+
+local function isStreamLike(stream, probePeriod)
+    if stream == nil then return false end
+    local t = type(stream)
+    if t ~= "table" and t ~= "userdata" then return false end
+    return readStreamValue(stream, probePeriod) ~= nil
+end
+
 local function minuteOfDay(ts)
     if ts == nil then return nil end
     local f = ts - math.floor(ts)
@@ -359,10 +375,13 @@ function Init()
     indicator.parameters:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
     indicator.parameters:addBoolean("allow_render_when_upstream_missing", "Allow Render When Upstream Missing", "", false)
     indicator.parameters:addBoolean("manualoverride", "Manual Override DayType (Debug)", "", false)
-    indicator.parameters:addSource("daytype_trade_day_stream", "DayType Stream: is_trade_day", "", "close")
-    indicator.parameters:addSource("daytype_frd_event_stream", "DayType Stream: is_frd_event_day", "", "close")
-    indicator.parameters:addSource("daytype_fgd_event_stream", "DayType Stream: is_fgd_event_day", "", "close")
-    indicator.parameters:addSource("daytype_bias_stream", "DayType Stream: day_bias", "", "close")
+    local hasAddSource = (type(indicator.parameters.addSource) == "function")
+    if hasAddSource then
+        indicator.parameters:addSource("daytype_trade_day_stream", "DayType Stream: is_trade_day", "", "close")
+        indicator.parameters:addSource("daytype_frd_event_stream", "DayType Stream: is_frd_event_day", "", "close")
+        indicator.parameters:addSource("daytype_fgd_event_stream", "DayType Stream: is_fgd_event_day", "", "close")
+        indicator.parameters:addSource("daytype_bias_stream", "DayType Stream: day_bias", "", "close")
+    end
 
     indicator.parameters:addBoolean("upstreamistradeday", "Upstream Is Trade Day", "", false)
     indicator.parameters:addBoolean("upstreamisfrd", "Upstream Is FRD", "", false)
@@ -385,12 +404,18 @@ function Prepare(nameOnly)
     S.upstream.dayBias = instance.parameters.daytype_bias_stream
 
     local missing = {}
-    if S.upstream.tradeDay == nil then table.insert(missing, "is_trade_day") end
-    if S.upstream.frdEvent == nil then table.insert(missing, "is_frd_event_day") end
-    if S.upstream.fgdEvent == nil then table.insert(missing, "is_fgd_event_day") end
-    if S.upstream.dayBias == nil then table.insert(missing, "day_bias") end
-    if #missing > 0 then
-        debugLog("DayType upstream streams not ready: " .. table.concat(missing, ", ") .. ". Enable manual override for fallback debugging.")
+    local hasCompatibleStreamSet =
+        isStreamLike(S.upstream.tradeDay, S.first) and
+        isStreamLike(S.upstream.frdEvent, S.first) and
+        isStreamLike(S.upstream.fgdEvent, S.first) and
+        isStreamLike(S.upstream.dayBias, S.first)
+
+    if not hasCompatibleStreamSet then
+        if not isStreamLike(S.upstream.tradeDay, S.first) then table.insert(missing, "is_trade_day") end
+        if not isStreamLike(S.upstream.frdEvent, S.first) then table.insert(missing, "is_frd_event_day") end
+        if not isStreamLike(S.upstream.fgdEvent, S.first) then table.insert(missing, "is_fgd_event_day") end
+        if not isStreamLike(S.upstream.dayBias, S.first) then table.insert(missing, "day_bias") end
+        debugLog("DayType upstream stream params unavailable/non-stream: " .. table.concat(missing, ", ") .. ". Fallback to manual upstream* inputs when manualoverride=false.")
         S.upstream.warnedMissing = true
     else
         debugLog("DayType upstream streams connected: is_trade_day/is_frd_event_day/is_fgd_event_day/day_bias")
@@ -430,23 +455,32 @@ function Update(period, mode)
         gate.upstreamTradeDay = st.day.isTradeDay and 1 or 0
     else
         local up = S.upstream
-        local hasUpstream = up.tradeDay ~= nil and up.frdEvent ~= nil and up.fgdEvent ~= nil and up.dayBias ~= nil
+        local hasUpstream =
+            isStreamLike(up.tradeDay, period) and
+            isStreamLike(up.frdEvent, period) and
+            isStreamLike(up.fgdEvent, period) and
+            isStreamLike(up.dayBias, period)
         gate.hasUpstream = hasUpstream
 
         if hasUpstream then
-            st.day.isTradeDay = (up.tradeDay[period] or 0) > 0
-            st.day.isFrd = (up.frdEvent[period] or 0) > 0
-            st.day.isFgd = (up.fgdEvent[period] or 0) > 0
-            st.day.bias = math.floor((up.dayBias[period] or 0) + 0.000001)
-            gate.upstreamTradeDay = (up.tradeDay[period] or 0)
+            local tradeDayValue = readStreamValue(up.tradeDay, period) or 0
+            local frdValue = readStreamValue(up.frdEvent, period) or 0
+            local fgdValue = readStreamValue(up.fgdEvent, period) or 0
+            local dayBiasValue = readStreamValue(up.dayBias, period) or 0
+
+            st.day.isTradeDay = tradeDayValue > 0
+            st.day.isFrd = frdValue > 0
+            st.day.isFgd = fgdValue > 0
+            st.day.bias = math.floor(dayBiasValue + 0.000001)
+            gate.upstreamTradeDay = tradeDayValue
         else
-            st.day.isTradeDay = false
-            st.day.isFrd = false
-            st.day.isFgd = false
-            st.day.bias = 0
-            gate.upstreamTradeDay = nil
+            st.day.isTradeDay = instance.parameters.upstreamistradeday
+            st.day.isFrd = instance.parameters.upstreamisfrd
+            st.day.isFgd = instance.parameters.upstreamisfgd
+            st.day.bias = instance.parameters.upstreambias
+            gate.upstreamTradeDay = st.day.isTradeDay and 1 or 0
             if not up.warnedMissing then
-                debugLog("Missing DayType upstream streams in Update(). Structure stays gated off until streams are connected or manual override is enabled.")
+                debugLog("Missing/non-stream DayType upstream in Update(). Auto-fallback to manual upstream* values (upstreamistradeday/upstreamisfrd/upstreamisfgd/upstreambias).")
                 up.warnedMissing = true
             end
         end

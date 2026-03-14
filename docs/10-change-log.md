@@ -1,5 +1,13 @@
 # 10-change-log
 
+
+## 2026-03-14
+- `Indicators/Custom/3/SB_Structure_Engine.lua` 新增 upstream 參數相容層：`Init()` 先檢查 `indicator.parameters.addSource` 是否存在，存在才註冊 `daytype_*_stream`。
+- `Prepare()` 新增 stream-like 檢查，避免把非 stream 型態誤判為可讀 upstream handle。
+- `Update()` upstream 讀值改為安全讀取 + 型態判斷，避免對非 stream 直接做 `up.xxx[period]` 索引。
+- 當平台不支援 `addSource` 或 upstream 不是 stream 時，`manualoverride=false` 也會自動 fallback 到 `upstreamistradeday/upstreamisfrd/upstreamisfgd/upstreambias`。
+- README 補充「平台相容策略（Structure upstream 參數）」說明，明確定義 stream 模式與 fallback 模式的切換規則。
+
 ## 2026-03-11
 - 修正 `SB_Full_Manual_Workflow_FXCM.lua` 匯入錯誤：`function at line XXX has more than 60 upvalues`。
 - 結構重整為單一真實來源（SSOT）容器：
