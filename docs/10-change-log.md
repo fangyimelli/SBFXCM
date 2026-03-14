@@ -2,6 +2,9 @@
 
 
 ## 2026-03-14
+- `Indicators/Custom/3/SB_Structure_Engine.lua` 移除 upstream 參數與 stream 連線流程（`daytype_*_stream`、`manualoverride`、`upstream*`）。
+- Structure DayType 控制簡化為本地單次設定：`istradeday` + `daymode(-1=FRD,1=FGD)`。
+- `Update()` gate 改為只依賴 `requiretradeday` 與 `istradeday`，不再做 upstream 相容分支。
 - `Indicators/Custom/3/SB_Structure_Engine.lua` 新增 upstream 參數相容層：`Init()` 先檢查 `indicator.parameters.addSource` 是否存在，存在才註冊 `daytype_*_stream`。
 - `Prepare()` 新增 stream-like 檢查，避免把非 stream 型態誤判為可讀 upstream handle。
 - `Update()` upstream 讀值改為安全讀取 + 型態判斷，避免對非 stream 直接做 `up.xxx[period]` 索引。

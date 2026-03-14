@@ -258,11 +258,11 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
    - 建立週五 FRD/FGD event，並確認週末存在或不存在 D1 列時都不影響映射。
    - 預期下個 trade-day 標記落在週一（或下一個有效交易日），不可落在週六/週日。
 
-6. **Structure gate 故障排查（upstream 擋住）**
+6. **Structure gate 故障排查（簡化版）**
    - 在 `SB_Structure_Engine.lua` 先看 stream `can_render_structure` 是否為 `0`
-   - 若為 `0`，再看 `gate_upstream_trade_day` 是否有值（nil/空值通常代表 upstream DayType 未接線）
-   - 同步看 `gate_require_trade_day` 與 `gate_final_can_render`，快速定位是「require gate」還是「upstream 缺失」造成阻擋
-   - 若 upstream 暫時未接線，可開啟參數 `allow_render_when_upstream_missing=true` 作為 fallback，避免結構畫面全空
+   - 若為 `0`，先確認 `requiretradeday` 是否為 `true`
+   - 若 `requiretradeday=true`，再檢查 `istradeday` 是否為 `true`
+   - 同步看 `gate_require_trade_day`、`gate_trade_day_semantic`、`gate_final_can_render`，快速定位 gate 阻擋點
 
 ---
 
@@ -371,13 +371,10 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 
 ### Structure Engine 責任邊界（本輪）
 - Structure 不再輸出 `BOS/CHoCH/swing/trend/bias` 等正式文字。
-- Structure 不自行重建 Trade Day；改為直接 consume DayType output stream：
-  - `daytype_trade_day_stream`（接 `is_trade_day`）
-  - `daytype_frd_event_stream`（接 `is_frd_event_day`）
-  - `daytype_fgd_event_stream`（接 `is_fgd_event_day`）
-  - `daytype_bias_stream`（接 `day_bias`）
-- 預設主流程是 upstream stream；`manualoverride=true` 僅供除錯，才會使用手動參數：
-  - `upstreamistradeday` / `upstreamisfrd` / `upstreamisfgd` / `upstreambias`
+- Structure 改為本地單次設定，不再依賴 upstream stream 連線。
+- DayType 相關只保留兩個手動參數：
+  - `istradeday`（是否啟用 trade-day gate）
+  - `daymode`（`-1=FRD`, `1=FGD`）
 - 正式渲染統一走單一 gate：`canRenderStructure = isTradeDay`。
 
 ### Consolidation 判定（程式化）
@@ -405,14 +402,9 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 - BIS 之後：可持續看到 `Session High / Session Low` 更新。
 
 
-### 平台相容策略（Structure upstream 參數）
-- `SB_Structure_Engine.lua` 在 `Init()` 會先檢查 `indicator.parameters.addSource` 是否可用：
-  - 可用：註冊 `daytype_trade_day_stream/daytype_frd_event_stream/daytype_fgd_event_stream/daytype_bias_stream`（stream 直連模式）。
-  - 不可用：不註冊 `addSource` 類型參數，改走既有手動參數作為 fallback。
-- `Prepare()` 與 `Update()` 不再假設 upstream 一定是 stream handle，會先做型態/可索引檢查。
-- 若 upstream 不是可索引 stream（例如平台只提供基本參數型態），會自動 fallback 到：
-  - `upstreamistradeday`
-  - `upstreamisfrd`
-  - `upstreamisfgd`
-  - `upstreambias`
-- `manualoverride=true` 仍保留原本語意（強制手動值）；`manualoverride=false` 時若 stream 不可用，會自動採用 fallback 手動參數（平台相容模式）。
+### 參數簡化（Structure）
+- `SB_Structure_Engine.lua` 目前已移除 upstream 參數與 stream 連線設定。
+- 掛上後只需關注：
+  - consolidation 參數（Min Bars / Stale Bars / ATR / Range ATR Mult / Drift Ratio）
+  - gate 參數（`requiretradeday` + `istradeday`）
+  - 方向參數（`daymode`，`-1=FRD`, `1=FGD`）
