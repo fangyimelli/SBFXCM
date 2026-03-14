@@ -1067,6 +1067,8 @@ end
 
 build_day_record = function(day_idx)
     if day_idx == nil or day_idx <= S.d1:first() + 1 then return nil end
+    local sourceDate = S.d1:date(day_idx)
+    if sourceDate == nil or is_weekend_timestamp(sourceDate) then return nil end
     local lastIdx = S.d1:size() - 1
     local isActiveDay = day_idx == lastIdx
     local cachedRec = S.day_cache[day_idx]
