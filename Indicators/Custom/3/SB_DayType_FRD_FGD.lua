@@ -286,6 +286,15 @@ function GetDayTypeLabels(period, dayRecord)
         return string.format("%s(%s)", prefix, reasonText)
     end
 
+    local function format_scored_label(base, score, grade)
+        local n = tonumber(score)
+        if n == nil then return base end
+        if grade ~= nil and grade ~= "" then
+            return string.format("%s(%d%s)", base, n, tostring(grade))
+        end
+        return string.format("%s(%d)", base, n)
+    end
+
     local labels = {}
     local isFrdEvent = rec.isFrd or rec.is_frd_event_day
     local isFgdEvent = rec.isFgd or rec.is_fgd_event_day
@@ -294,15 +303,17 @@ function GetDayTypeLabels(period, dayRecord)
     if showProvisionalTradeDay then
         labels[#labels + 1] = "Trade Day"
     elseif isFgdEvent then
-        labels[#labels + 1] = rec.isHighQualityFgd and "FGD+" or "FGD"
+        local fgdBase = rec.isHighQualityFgd and "FGD+" or "FGD"
+        labels[#labels + 1] = format_scored_label(fgdBase, rec.qualityScoreFgd, rec.qualityGradeFgd)
     elseif isFrdEvent then
-        labels[#labels + 1] = rec.isHighQualityFrd and "FRD+" or "FRD"
+        local frdBase = rec.isHighQualityFrd and "FRD+" or "FRD"
+        labels[#labels + 1] = format_scored_label(frdBase, rec.qualityScoreFrd, rec.qualityGradeFrd)
     elseif rec.isTradeDay then
         labels[#labels + 1] = "Trade Day"
     elseif instance.parameters.ShowNearMissLabels and rec.nearMissFrd then
-        labels[#labels + 1] = near_miss_reason("FRD?")
+        labels[#labels + 1] = format_scored_label(near_miss_reason("FRD?"), rec.qualityScoreFrd, rec.qualityGradeFrd)
     elseif instance.parameters.ShowNearMissLabels and rec.nearMissFgd then
-        labels[#labels + 1] = near_miss_reason("FGD?")
+        labels[#labels + 1] = format_scored_label(near_miss_reason("FGD?"), rec.qualityScoreFgd, rec.qualityGradeFgd)
     end
 
     return labels
@@ -696,13 +707,15 @@ local function emit_full_audit(lastDayIdx)
 end
 
 local function get_day_type_color(label)
-    if label == "FRD+" then
+    if label == nil then
+        return instance.parameters.InactiveTextColor
+    elseif string.sub(label, 1, 4) == "FRD+" then
         return instance.parameters.FRDPlusColor
-    elseif label == "FGD+" then
+    elseif string.sub(label, 1, 4) == "FGD+" then
         return instance.parameters.FGDPlusColor
-    elseif label == "FRD" then
+    elseif string.sub(label, 1, 3) == "FRD" then
         return instance.parameters.FRDTextColor
-    elseif label == "FGD" then
+    elseif string.sub(label, 1, 3) == "FGD" then
         return instance.parameters.FGDTextColor
     elseif label == "Trade Day" then
         return instance.parameters.TradeDayTextColor
@@ -716,7 +729,7 @@ end
 
 local function is_frd_fgd_label(label)
     if label == nil then return false end
-    return label == "FRD" or label == "FRD+" or label == "FGD" or label == "FGD+"
+    return string.sub(label, 1, 3) == "FRD" or string.sub(label, 1, 3) == "FGD"
 end
 
 local function draw_text(context, fontId, text, color, x, y)
