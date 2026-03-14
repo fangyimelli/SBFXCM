@@ -330,23 +330,27 @@ local function render(period, canRender)
 end
 
 function Init()
-    indicator:name("SB Structure Engine (Simple)")
-    indicator:description("Simple Structure output: Consolidation -> BIS -> Session High/Low")
-    indicator:requiredSource(core.Bar)
-    indicator:type(core.Indicator)
+    local ind = indicator or instance
+    if ind == nil then return end
 
-    indicator.parameters:addString("profile", "Profile", "", "Default")
-    indicator.parameters:addStringAlternative("Default", "Default", "")
-    indicator.parameters:addStringAlternative("Tight", "Tight", "")
-    indicator.parameters:addStringAlternative("Loose", "Loose", "")
+    ind:name("SB Structure Engine (Simple)")
+    ind:description("Simple Structure output: Consolidation -> BIS -> Session High/Low")
+    ind:requiredSource(core.Bar)
+    ind:type(core.Indicator)
 
-    indicator.parameters:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
-    indicator.parameters:addBoolean("fallbackistradeday", "Fallback Is Trade Day", "", true)
-    if indicator.parameters.addSource ~= nil then
-        indicator.parameters:addSource("daytype_trade_day_stream", "DayType is_trade_day stream", "")
-        indicator.parameters:addSource("daytype_frd_event_stream", "DayType is_frd_event_day stream", "")
-        indicator.parameters:addSource("daytype_fgd_event_stream", "DayType is_fgd_event_day stream", "")
-        indicator.parameters:addSource("daytype_bias_stream", "DayType day_bias stream", "")
+    local p = ind.parameters
+    p:addString("profile", "Profile", "", "Default")
+    p:addStringAlternative("profile", "Default", "Default", "")
+    p:addStringAlternative("profile", "Tight", "Tight", "")
+    p:addStringAlternative("profile", "Loose", "Loose", "")
+
+    p:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
+    p:addBoolean("fallbackistradeday", "Fallback Is Trade Day", "", true)
+    if p.addSource ~= nil then
+        p:addSource("daytype_trade_day_stream", "DayType is_trade_day stream", "")
+        p:addSource("daytype_frd_event_stream", "DayType is_frd_event_day stream", "")
+        p:addSource("daytype_fgd_event_stream", "DayType is_fgd_event_day stream", "")
+        p:addSource("daytype_bias_stream", "DayType day_bias stream", "")
     end
 end
 
