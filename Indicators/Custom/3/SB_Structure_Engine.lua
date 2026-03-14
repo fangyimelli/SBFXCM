@@ -55,13 +55,6 @@ local T = {}
 local O = {}
 
 local PROFILE_PRESETS = {
-    conservative = {
-        consolidationminbars = 10,
-        consolidationstalebars = 4,
-        atrlen = 21,
-        maxconsolidationatrmult = 0.8,
-        maxdriftratio = 0.30
-    },
     default = {
         consolidationminbars = 8,
         consolidationstalebars = 3,
@@ -69,7 +62,14 @@ local PROFILE_PRESETS = {
         maxconsolidationatrmult = 1.0,
         maxdriftratio = 0.45
     },
-    aggressive = {
+    tight = {
+        consolidationminbars = 10,
+        consolidationstalebars = 4,
+        atrlen = 21,
+        maxconsolidationatrmult = 0.8,
+        maxdriftratio = 0.30
+    },
+    loose = {
         consolidationminbars = 6,
         consolidationstalebars = 2,
         atrlen = 10,
@@ -82,30 +82,6 @@ local function resolveProfileName(rawProfile)
     local value = string.lower(tostring(rawProfile or "default"))
     if PROFILE_PRESETS[value] ~= nil then return value end
     return "default"
-end
-
-local function applyRuntimeSettings()
-    local simpleMode = instance.parameters.simplemode
-    local profileName = resolveProfileName(instance.parameters.profile)
-    local preset = PROFILE_PRESETS[profileName] or PROFILE_PRESETS.default
-    local cfg = S.runtime
-
-    cfg.simplemode = simpleMode
-    cfg.profile = profileName
-
-    if simpleMode then
-        cfg.consolidationminbars = preset.consolidationminbars
-        cfg.consolidationstalebars = preset.consolidationstalebars
-        cfg.atrlen = preset.atrlen
-        cfg.maxconsolidationatrmult = preset.maxconsolidationatrmult
-        cfg.maxdriftratio = preset.maxdriftratio
-    else
-        cfg.consolidationminbars = instance.parameters.consolidationminbars
-        cfg.consolidationstalebars = instance.parameters.consolidationstalebars
-        cfg.atrlen = instance.parameters.atrlen
-        cfg.maxconsolidationatrmult = instance.parameters.maxconsolidationatrmult
-        cfg.maxdriftratio = instance.parameters.maxdriftratio
-    end
 end
 
 local function debugLog(msg)
@@ -206,11 +182,19 @@ local function detectConsolidation(period, canRender)
         return
     end
 
-    local cfg = S.runtime
-    local minBars = math.max(3, cfg.consolidationminbars)
-    local atrLen = math.max(2, cfg.atrlen)
-    local maxAtrMult = math.max(0.1, cfg.maxconsolidationatrmult)
-    local trendLimit = math.max(0.05, math.min(1.0, cfg.maxdriftratio))
+    local params
+    if instance.parameters.simplemode then
+        local profileName = resolveProfileName(instance.parameters.profile)
+        params = PROFILE_PRESETS[profileName] or PROFILE_PRESETS.default
+    else
+        params = instance.parameters
+    end
+
+    local minBars = math.max(3, params.consolidationminbars)
+    local staleBars = math.max(1, params.consolidationstalebars)
+    local atrLen = math.max(2, params.atrlen)
+    local maxAtrMult = math.max(0.1, params.maxconsolidationatrmult)
+    local trendLimit = math.max(0.05, math.min(1.0, params.maxdriftratio))
 
     local candidate = findConsolidationCandidate(src, period, minBars, atrLen, maxAtrMult, trendLimit)
 
@@ -244,7 +228,7 @@ local function detectConsolidation(period, canRender)
             con.low = candidate.low
             con.lastInsideBar = period
             con.endBar = period
-        elseif period - con.lastInsideBar > math.max(1, cfg.consolidationstalebars) then
+        elseif period - con.lastInsideBar > staleBars then
             con.active = false
         end
     end
@@ -405,9 +389,9 @@ function Init()
 
     indicator.parameters:addBoolean("simplemode", "Simple Mode", "", true)
     indicator.parameters:addString("profile", "Simple Profile", "", "Default")
-    indicator.parameters:addStringAlternative("Conservative", "Conservative", "")
     indicator.parameters:addStringAlternative("Default", "Default", "")
-    indicator.parameters:addStringAlternative("Aggressive", "Aggressive", "")
+    indicator.parameters:addStringAlternative("Tight", "Tight", "")
+    indicator.parameters:addStringAlternative("Loose", "Loose", "")
 
     indicator.parameters:addInteger("consolidationminbars", "Consolidation Min Bars", "", 8)
     indicator.parameters:addInteger("consolidationstalebars", "Consolidation Stale Bars", "", 3)
@@ -453,7 +437,6 @@ function Update(period, mode)
 
     local st = S.state
     clearEvents(st.events)
-    applyRuntimeSettings()
 
     local gate = st.gate
 
