@@ -1,5 +1,14 @@
 # 10-change-log
 
+## 2026-03-14
+- 修正 `Indicators/Custom/3/SB_Structure_Engine.lua` 的 DayType upstream 參數相容層：
+  - `Init()` 先檢查 `indicator.parameters.addSource` 是否可用。
+  - 可用時維持 `daytype_trade_day_stream/daytype_frd_event_stream/daytype_fgd_event_stream/daytype_bias_stream` 為 `addSource`。
+  - 不可用時改用同名 fallback 參數型態（`boolean/integer`），避免匯入階段因 `addSource` 缺失失敗。
+- `Prepare()` 新增 upstream 參數型態檢查，避免假設 DayType 一定是 stream handle。
+- `Update()` upstream 讀值新增型態判斷（stream/value 分支），避免直接對非 stream 型態做 `up.*[period]` 索引。
+- README 補充平台相容策略：支援 `addSource` 走 stream，不支援時走 fallback 數值輸入；正式邏輯自動分支處理。
+
 ## 2026-03-11
 - 修正 `SB_Full_Manual_Workflow_FXCM.lua` 匯入錯誤：`function at line XXX has more than 60 upvalues`。
 - 結構重整為單一真實來源（SSOT）容器：
