@@ -884,15 +884,10 @@ local function chart_date_key_for_d1_idx(day_idx)
     local sourceDate = S.d1:date(day_idx)
     if sourceDate == nil then return nil end
 
-    local next_idx = day_idx + 1
-    if next_idx <= S.d1:size() - 1 then
-        local nextDate = S.d1:date(next_idx)
-        if nextDate ~= nil and nextDate > sourceDate then
-            return day_key(nextDate - (1 / 86400))
-        end
-    end
-
-    return day_key(sourceDate)
+    -- D1 timestamp in FX often marks session-open (previous calendar day evening).
+    -- Shift +1 day so debug/report date follows chart trading day, but do not
+    -- force weekend->Monday here (that can collapse distinct bars into same date).
+    return day_key(sourceDate + 1)
 end
 
 local function format_date_key(dateKey)
@@ -920,8 +915,8 @@ local function find_prev_effective_trading_day_idx(day_idx)
     local first = S.d1:first()
     local idx = day_idx - 1
     while idx >= first do
-        local ts = S.d1:date(idx)
-        if ts ~= nil and not is_weekend_timestamp(ts) then
+        local chartKey = chart_date_key_for_d1_idx(idx)
+        if chartKey ~= nil and not is_weekend_timestamp(chartKey) then
             return idx
         end
         idx = idx - 1
