@@ -43,7 +43,11 @@ local S = {
             consStartBar = nil,
             consEndBar = nil,
             consHigh = nil,
-            consLow = nil
+            consLow = nil,
+            session = nil,
+            sessionStartBar = nil,
+            sessionEndBar = nil,
+            sessionMid = nil
         }
     }
 }
@@ -73,6 +77,39 @@ end
 local function safeTextSet(out, period, price, text)
     if out == nil or period == nil or price == nil or text == nil then return end
     out:set(period, price, text)
+end
+
+local function createSessionDisplay(params)
+    local color = params.sessioncolor or core.rgb(255, 215, 0)
+    return {
+        high = nil,
+        low = nil,
+        bands = {
+            upper = nil,
+            lower = nil,
+            mid = nil
+        },
+        labels = {
+            high = nil,
+            low = nil
+        },
+        color = color,
+        style = params.sessionlinestyle,
+        fillAlpha = params.sessionfillalpha,
+        showSessionHigh = params.showsessionhigh,
+        showSessionLow = params.showsessionlow,
+        showSessionLabels = params.showsessionlabels,
+        showSessionMid = params.showsessionmid
+    }
+end
+
+local function createChannelGroup(name, color, alpha)
+    if instance == nil or type(instance.createChannelGroup) ~= "function" then return nil end
+    local ok, group = pcall(function()
+        return instance:createChannelGroup(name, color, alpha)
+    end)
+    if not ok then return nil end
+    return group
 end
 
 local function minuteOfDay(ts)
@@ -241,6 +278,7 @@ local function updateSession(period, canRender)
 
     if not canRender then
         sess.active = false
+        sess.startBar = nil
         return
     end
 
@@ -279,8 +317,13 @@ local function render(period, canRender)
     T.consolidationLow[period] = nil
     T.sessionHigh[period] = nil
     T.sessionLow[period] = nil
+    T.sessionMid[period] = nil
 
     if not canRender then return end
+
+    if disp.session == nil then
+        disp.session = createSessionDisplay(instance.parameters)
+    end
 
     local range = src.high[period] - src.low[period]
     local offset = range > 0 and range * 0.2 or src:pipSize() * 8
@@ -318,9 +361,26 @@ local function render(period, canRender)
         T.consolidationLow[period] = disp.consLow
     end
 
-    if sess.active then
-        T.sessionHigh[period] = sess.high
-        T.sessionLow[period] = sess.low
+    if sess.active and sess.startBar ~= nil then
+        disp.sessionStartBar = sess.startBar
+        disp.sessionEndBar = period
+        disp.session.high = sess.high
+        disp.session.low = sess.low
+        disp.session.bands.mid = (sess.high + sess.low) / 2
+
+        local startBar = disp.sessionStartBar
+        local endBar = disp.sessionEndBar
+        for i = startBar, endBar do
+            if disp.session.showSessionHigh then
+                T.sessionHigh[i] = disp.session.high
+            end
+            if disp.session.showSessionLow then
+                T.sessionLow[i] = disp.session.low
+            end
+            if disp.session.showSessionMid then
+                T.sessionMid[i] = disp.session.bands.mid
+            end
+        end
     end
 
     if ev.consolidationCreated ~= nil and not disp.consShown then
@@ -333,12 +393,12 @@ local function render(period, canRender)
         disp.bisShown = true
     end
 
-    if ev.sessionHighUpdated ~= nil and not disp.sessionHighShown then
+    if ev.sessionHighUpdated ~= nil and not disp.sessionHighShown and disp.session.showSessionLabels then
         safeTextSet(O.txtTarget, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "HOS/HOD ✓")
         disp.sessionHighShown = true
     end
 
-    if ev.sessionLowUpdated ~= nil and not disp.sessionLowShown then
+    if ev.sessionLowUpdated ~= nil and not disp.sessionLowShown and disp.session.showSessionLabels then
         safeTextSet(O.txtTarget, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "LOS/LOD ✓")
         disp.sessionLowShown = true
     end
@@ -361,6 +421,16 @@ function Init()
 
     p:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
     p:addBoolean("fallbackistradeday", "Fallback Is Trade Day", "", true)
+    p:addBoolean("showsessionhigh", "Show Session High", "", true)
+    p:addBoolean("showsessionlow", "Show Session Low", "", true)
+    p:addBoolean("showsessionlabels", "Show Session Labels", "", true)
+    p:addString("sessionlinestyle", "Session Line Style", "", "Solid")
+    p:addStringAlternative("sessionlinestyle", "Solid", "Solid", "")
+    p:addStringAlternative("sessionlinestyle", "Dash", "Dash", "")
+    p:addStringAlternative("sessionlinestyle", "Dot", "Dot", "")
+    p:addColor("sessioncolor", "Session Color", "", core.rgb(255, 215, 0))
+    p:addInteger("sessionfillalpha", "Session Fill Alpha", "", 30)
+    p:addBoolean("showsessionmid", "Show Session Mid", "", false)
     if p.addSource ~= nil then
         p:addSource("daytype_trade_day_stream", "DayType is_trade_day stream", "")
         p:addSource("daytype_frd_event_stream", "DayType is_frd_event_day stream", "")
@@ -385,10 +455,14 @@ function Prepare(nameOnly)
     T.consolidationLow = instance:addStream("consolidation_low", core.Line, "Consolidation Low", "", core.rgb(205, 205, 205), S.first)
     T.sessionHigh = instance:addStream("session_high", core.Line, "Session High", "", core.rgb(255, 215, 0), S.first)
     T.sessionLow = instance:addStream("session_low", core.Line, "Session Low", "", core.rgb(135, 206, 250), S.first)
+    T.sessionMid = instance:addStream("session_mid", core.Line, "Session Mid", "", core.rgb(255, 255, 255), S.first)
 
     O.txtConsolidation = instance:createTextOutput("", "SB_CONSOLIDATION", "Arial", 8, core.H_Center, core.V_Top, core.rgb(210, 210, 210), 0)
     O.txtBis = instance:createTextOutput("", "SB_BIS", "Arial", 9, core.H_Center, core.V_Top, core.rgb(220, 20, 60), 0)
     O.txtTarget = instance:createTextOutput("", "SB_TARGET", "Arial", 8, core.H_Center, core.V_Top, core.rgb(255, 215, 0), 0)
+
+    S.state.display.session = createSessionDisplay(instance.parameters)
+    O.sessionChannel = createChannelGroup("SB_SESSION_CHANNEL", S.state.display.session.color, S.state.display.session.fillAlpha)
 end
 
 function Update(period, mode)
