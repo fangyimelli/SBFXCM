@@ -393,7 +393,7 @@ local function build_audit_panel_lines(lastDayIdx)
     local impulseAtrMult = pumpDumpAtrMult
     local eventAtrMult = (eventRange ~= nil and eventAtr ~= nil and eventAtr > 0) and (eventRange / eventAtr) or nil
 
-    lines[#lines + 1] = "Date=" .. tostring(rec.dateLabel or format_date_key(rec.dateKey) or rec.dateKey or "N/A")
+    lines[#lines + 1] = "Date=" .. tostring(rec.chartDateLabel or rec.dateLabel or format_date_key(rec.chartDateKey or rec.dateKey) or rec.chartDateKey or rec.dateKey or "N/A")
     lines[#lines + 1] = string.format("FRD=%s FGD=%s TradeDay=%s", yn(rec.isFrd), yn(rec.isFgd), yn(rec.isTradeDay))
     lines[#lines + 1] = fmt_daily("Max Rectangle Height ATR", rectangleHeightAtr)
     lines[#lines + 1] = fmt_daily("Pump/Dump ATR Mult", pumpDumpAtrMult)
@@ -879,6 +879,22 @@ local function day_key(ts)
     return math.floor(ts)
 end
 
+local function chart_date_key_for_d1_idx(day_idx)
+    if S.d1 == nil or day_idx == nil then return nil end
+    local sourceDate = S.d1:date(day_idx)
+    if sourceDate == nil then return nil end
+
+    local next_idx = day_idx + 1
+    if next_idx <= S.d1:size() - 1 then
+        local nextDate = S.d1:date(next_idx)
+        if nextDate ~= nil and nextDate > sourceDate then
+            return day_key(nextDate - (1 / 86400))
+        end
+    end
+
+    return day_key(sourceDate)
+end
+
 local function format_date_key(dateKey)
     if dateKey == nil then return "N/A" end
     local t = nil
@@ -1174,12 +1190,16 @@ build_day_record = function(day_idx)
     local nearMissFrd = nearMissBasicFrd or nearMissQualifiedFrd
     local nearMissFgd = nearMissBasicFgd or nearMissQualifiedFgd
 
+    local chartDateKey = chart_date_key_for_d1_idx(day_idx)
+
     local rec = {
         sourceDate = S.d1:date(day_idx),
         dateKey = day_key(S.d1:date(day_idx)),
         prevDateKey = day_key(S.d1:date(prev_idx)),
         nextDateKey = day_idx + 1 <= S.d1:size() - 1 and day_key(S.d1:date(day_idx + 1)) or nil,
         dateLabel = format_date_key(day_key(S.d1:date(day_idx))),
+        chartDateKey = chartDateKey,
+        chartDateLabel = format_date_key(chartDateKey),
 
         prevOpen = prevOpen, prevHigh = prevHigh, prevLow = prevLow, prevClose = prevClose,
         prevRange = prevRange, prevAtr = prevAtr, prevClv = prevClv, prevBodyRatio = prevBodyRatio,
