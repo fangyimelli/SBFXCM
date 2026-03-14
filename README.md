@@ -92,7 +92,10 @@
 ## 4.1) DayType 可視化輸出（顯示層規格）
 - 顯示層已改為 owner-draw（`Prepare()` 內 `instance:ownerDrawn(true)`，`Draw(stage, context)` 在 `stage == 2` 繪製）
 - 第一行固定顯示：`weekday`
-- 第二行/第三行可顯示：`FRD` / `FGD` / `Trade Day`（同一交易日可同時出現多行）
+- 第二行/第三行顯示優先序：
+  1. 若當日為 `FRD/FGD event`（含 `isFrd` / `isFgd` 及對應 event day 欄位）→ 顯示 `FRD` / `FRD+` 或 `FGD` / `FGD+`，且不顯示 `Trade Day`
+  2. 僅在「非 FRD/FGD event」且 `isTradeDay=true` 時顯示 `Trade Day`
+  3. near-miss（`FRD?` / `FGD?`）保留，並放在 FRD/FGD 與 Trade Day 之後的顯示層級
 - 即使當日沒有 FRD / FGD / Trade Day setup，仍需顯示 `weekday`
 - stream 與圖上文字分離：stream 持續輸出供 debug / 下游 consume；圖上文字由 owner-draw 的 `drawText` 直接繪製
 - rectangle debug 可視化目前會畫 `rectangleHigh` / `rectangleLow` 水平線；僅作 debug，不作為 FRD/FGD/Trade Day 顯示 gating
@@ -104,10 +107,10 @@
 - `is_fgd_trade_day_candidate`
 
 Label 顯示：
-- `FRD`
-- `FGD`
-- `Trade Day`
-- `FRD?` / `FGD?`（當 near-miss 成立且 `ShowNearMissLabels=true`）
+- `FRD` / `FRD+`
+- `FGD` / `FGD+`
+- `Trade Day`（僅非 event 日）
+- `FRD?` / `FGD?`（當 near-miss 成立且 `ShowNearMissLabels=true`，且優先序低於 event / trade-day）
 
 Near-miss 可視化控制參數：
 - `ShowNearMissLabels`：是否顯示 `FRD?` / `FGD?`
