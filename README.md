@@ -341,6 +341,10 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
   - `daytype_frd_event_stream`（接 `is_frd_event_day`）
   - `daytype_fgd_event_stream`（接 `is_fgd_event_day`）
   - `daytype_bias_stream`（接 `day_bias`）
+- 平台相容策略：
+  - 若平台支援 `indicator.parameters.addSource`，上述 4 個參數維持 stream handle。
+  - 若平台不支援 `addSource`，同名參數會自動改為 fallback 數值型態（`boolean/integer`），直接輸入 daytype flags 與 bias。
+  - `Prepare()/Update()` 會先做型態分支（stream vs fallback value），避免對非 stream 型態做 `[period]` 索引。
 - 預設主流程是 upstream stream；`manualoverride=true` 僅供除錯，才會使用手動參數：
   - `upstreamistradeday` / `upstreamisfrd` / `upstreamisfgd` / `upstreambias`
 - 正式渲染統一走單一 gate：`canRenderStructure = isTradeDay`。
