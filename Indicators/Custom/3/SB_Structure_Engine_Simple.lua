@@ -122,6 +122,25 @@ local function addInternalBandStream(id, title, first, color)
     return instance:addStream(id, core.Line, title, "", color, first)
 end
 
+local function bindChannelGroup(group, upper, lower)
+    if group == nil or upper == nil or lower == nil then return false end
+
+    local attempts = {
+        function() group:addStream(upper, lower) end,
+        function() group:addStream(upper) group:addStream(lower) end,
+        function() group:setStreams(upper, lower) end,
+        function() group:setStream(upper, lower) end,
+        function() group:setStream(1, upper) group:setStream(2, lower) end,
+        function() group.upper = upper group.lower = lower end
+    }
+
+    for _, attempt in ipairs(attempts) do
+        local ok = pcall(attempt)
+        if ok then return true end
+    end
+    return false
+end
+
 local function minuteOfDay(ts)
     if ts == nil then return nil end
     local f = ts - math.floor(ts)
@@ -551,7 +570,9 @@ function Prepare(nameOnly)
 
     S.state.display.session = createSessionDisplay(instance.parameters)
     O.consolidationChannel = createChannelGroup("SB_CONSOLIDATION_CHANNEL", instance.parameters.conscolor, instance.parameters.consfillalpha)
+    bindChannelGroup(O.consolidationChannel, T.consolidationHighBand, T.consolidationLowBand)
     O.sessionChannel = createChannelGroup("SB_SESSION_CHANNEL", S.state.display.session.color, S.state.display.session.fillAlpha)
+    bindChannelGroup(O.sessionChannel, T.sessionHigh, T.sessionLow)
 end
 
 function Update(period, mode)
