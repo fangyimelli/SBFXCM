@@ -1,7 +1,7 @@
 local okShared, shared = pcall(dofile, "Indicators/Custom/3/SB_Playbook_Shared.lua")
 if not okShared then shared = nil end
 
-local S={source=nil,first=nil,d1=nil,m15=nil,day_cache={},structure_runtime={day_key=nil,asia_high=nil,asia_low=nil}}
+local S={source=nil,first=nil,d1=nil,m15=nil,day_cache={},daytype_runtime={day_key=nil,index={},rectangle={}},structure_runtime={day_key=nil,asia_high=nil,asia_low=nil,index_cache={}}}
 local T={}
 
 local function getHistory(i,tf,b)
@@ -49,7 +49,12 @@ function Update(period, mode)
     if shared==nil or S.source==nil or S.d1==nil or S.m15==nil or period<S.first then return end
 
     local ts=S.source:date(period)
-    local d1idx=shared.find_history_index_by_time(S.d1, ts)
+    shared.handle_day_rollover(S.daytype_runtime, ts)
+    if S.daytype_runtime.day_cache_key ~= S.daytype_runtime.day_key then
+        S.daytype_runtime.day_cache_key = S.daytype_runtime.day_key
+        S.day_cache = {}
+    end
+    local d1idx=shared.find_history_index_by_time(S.d1, ts, S.daytype_runtime.index)
     local d=nil
     if d1idx~=nil then
         d=shared.build_daytype_record(S.d1, S.m15, d1idx, {
@@ -57,7 +62,7 @@ function Update(period, mode)
             rectangle_min_contained_closes=6,
             max_rectangle_height_atr=1.2,
             dayatrlen=14
-        }, S.day_cache)
+        }, S.day_cache, S.daytype_runtime)
     end
 
     local structure=shared.update_structure_state(S.structure_runtime, S.source, S.m15, period, {bosleft=2, bosright=2})
