@@ -27,12 +27,14 @@ local S = {
         bis1 = {
             firedUp = false,
             firedDown = false,
+            firedAny = false,
             fireBar = nil,
             firePrice = nil
         },
         bis2 = {
             firedUp = false,
             firedDown = false,
+            firedAny = false,
             fireBar = nil,
             firePrice = nil
         },
@@ -57,7 +59,8 @@ local S = {
         },
         events = {
             consolidationCreated = nil,
-            bisFired = nil,
+            bis1Fired = nil,
+            bis2Fired = nil,
             sessionHighUpdated = nil,
             sessionLowUpdated = nil,
             lastBisConsolidationId = nil
@@ -65,7 +68,8 @@ local S = {
         display = {
             setupId = nil,
             consShown = false,
-            bisShown = false,
+            bis1Shown = false,
+            bis2Shown = false,
             sessionHighShown = false,
             sessionLowShown = false,
             consStartBar = nil,
@@ -256,6 +260,7 @@ end
 local function resetBisEvent(bis)
     bis.firedUp = false
     bis.firedDown = false
+    bis.firedAny = false
     bis.fireBar = nil
     bis.firePrice = nil
 end
@@ -283,20 +288,24 @@ local function accumulateBox(box, period)
     end
 end
 
-local function tryFireBisFromBox(period, ts, src, box, bis, ev, bisName)
+local function tryFireBisFromBox(period, ts, src, box, bis, ev, bisName, evField)
     if not box.isReady then return end
     if not inBisWindow(ts) then return end
+    if ev[evField] ~= nil then return end
 
-    if src.close[period] > box.high and (not bis.firedUp) then
+    local oncePerBox = instance.parameters.bisonceperbox
+    if src.close[period] > box.high and (not bis.firedUp) and (not oncePerBox or not bis.firedAny) then
         bis.firedUp = true
+        bis.firedAny = true
         bis.fireBar = period
         bis.firePrice = src.high[period]
-        ev.bisFired = { bar = period, price = bis.firePrice, dir = "up", bis = bisName, sourceHigh = box.high, dayKey = box.dayKey }
-    elseif src.close[period] < box.low and (not bis.firedDown) then
+        ev[evField] = { bar = period, price = bis.firePrice, dir = "up", bis = bisName, sourceHigh = box.high, dayKey = box.dayKey }
+    elseif src.close[period] < box.low and (not bis.firedDown) and (not oncePerBox or not bis.firedAny) then
         bis.firedDown = true
+        bis.firedAny = true
         bis.fireBar = period
         bis.firePrice = src.low[period]
-        ev.bisFired = { bar = period, price = bis.firePrice, dir = "down", bis = bisName, sourceLow = box.low, dayKey = box.dayKey }
+        ev[evField] = { bar = period, price = bis.firePrice, dir = "down", bis = bisName, sourceLow = box.low, dayKey = box.dayKey }
     end
 end
 
@@ -311,7 +320,8 @@ local function renderBisLabel(ev, period, offset)
     if ev == nil or (not instance.parameters.showbislabel) then return false end
 
     local isUp = ev.dir == "up"
-    local label = isUp and "BIS UP ✓" or "BIS DOWN ✓"
+    local bisPrefix = string.upper(tostring(ev.bis or "BIS"))
+    local label = isUp and (bisPrefix .. " UP") or (bisPrefix .. " DOWN")
     local price = isUp and (ev.price + offset) or (ev.price - offset)
     local output = isUp and O.txtBisUp or O.txtBisDown
     safeTextSet(output, period, price, label)
@@ -320,9 +330,14 @@ end
 
 local function clearEvents(ev)
     ev.consolidationCreated = nil
-    ev.bisFired = nil
+    ev.bis1Fired = nil
+    ev.bis2Fired = nil
     ev.sessionHighUpdated = nil
     ev.sessionLowUpdated = nil
+end
+
+local function selectPrimaryBisEvent(ev)
+    return ev.bis1Fired or ev.bis2Fired
 end
 
 local function isReadableStream(v)
@@ -441,15 +456,11 @@ local function updateBoxesAndBis(period, canRender)
         windowEnded = londonWindowEnded
     })
 
-    if ev.bisFired == nil then
-        if st.prev2230Box.dayKey == key then
-            tryFireBisFromBox(period, ts, src, st.prev2230Box, st.bis1, ev, "bis1")
-        end
+    if st.prev2230Box.dayKey == key then
+        tryFireBisFromBox(period, ts, src, st.prev2230Box, st.bis1, ev, "bis1", "bis1Fired")
     end
-    if ev.bisFired == nil then
-        if st.londonBox.dayKey == key then
-            tryFireBisFromBox(period, ts, src, st.londonBox, st.bis2, ev, "bis2")
-        end
+    if st.londonBox.dayKey == key then
+        tryFireBisFromBox(period, ts, src, st.londonBox, st.bis2, ev, "bis2", "bis2Fired")
     end
 end
 
@@ -465,9 +476,10 @@ local function updateSession(period, canRender)
         return
     end
 
-    if ev.bisFired ~= nil then
+    local primaryBis = selectPrimaryBisEvent(ev)
+    if primaryBis ~= nil then
         sess.active = true
-        sess.sourceConsolidationId = ev.bisFired.bis
+        sess.sourceConsolidationId = primaryBis.bis
         sess.startBar = period
         sess.high = src.high[period]
         sess.low = src.low[period]
@@ -503,6 +515,8 @@ local function render(period, canRender, mode)
     T.sessionHigh[period] = nil
     T.sessionLow[period] = nil
     T.sessionMid[period] = nil
+    T.bis1State[period] = 0
+    T.bis2State[period] = 0
 
     local range = src.high[period] - src.low[period]
     local offset = range > 0 and range * 0.2 or src:pipSize() * 8
@@ -522,7 +536,8 @@ local function render(period, canRender, mode)
         if disp.setupId ~= ev.consolidationCreated.id then
             disp.setupId = ev.consolidationCreated.id
             disp.consShown = false
-            disp.bisShown = false
+            disp.bis1Shown = false
+            disp.bis2Shown = false
             disp.sessionHighShown = false
             disp.sessionLowShown = false
         end
@@ -536,7 +551,8 @@ local function render(period, canRender, mode)
         if disp.setupId ~= con.id then
             disp.setupId = con.id
             disp.consShown = false
-            disp.bisShown = false
+            disp.bis1Shown = false
+            disp.bis2Shown = false
             disp.sessionHighShown = false
             disp.sessionLowShown = false
         end
@@ -589,10 +605,18 @@ local function render(period, canRender, mode)
         disp.consShown = true
     end
 
-    if ev.bisFired ~= nil and not disp.bisShown then
-        renderBisLabel(ev.bisFired, ev.bisFired.bar, offset)
-        disp.bisShown = true
+    if ev.bis1Fired ~= nil and not disp.bis1Shown then
+        renderBisLabel(ev.bis1Fired, ev.bis1Fired.bar, offset)
+        disp.bis1Shown = true
     end
+
+    if ev.bis2Fired ~= nil and not disp.bis2Shown then
+        renderBisLabel(ev.bis2Fired, ev.bis2Fired.bar, offset)
+        disp.bis2Shown = true
+    end
+
+    T.bis1State[period] = ev.bis1Fired ~= nil and (ev.bis1Fired.dir == "up" and 1 or -1) or T.bis1State[period]
+    T.bis2State[period] = ev.bis2Fired ~= nil and (ev.bis2Fired.dir == "up" and 1 or -1) or T.bis2State[period]
 
     if ev.sessionHighUpdated ~= nil and not disp.sessionHighShown and disp.session.showSessionLabels then
         safeTextSet(O.txtTarget, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "HOS/HOD ✓")
@@ -671,6 +695,7 @@ function Init()
     p:addInteger("londonstartmin", "London Box Start Minute", "", 8 * 60)
     p:addInteger("londonendmin", "London Box End Minute", "", 9 * 60)
     p:addInteger("timezoneshifthours", "Timezone Shift Hours", "", 0)
+    p:addBoolean("bisonceperbox", "BIS Once Per Box", "", false)
     p:addBoolean("bisallowrepeatinconsolidation", "Allow Repeat BIS in Consolidation", "", false)
     p:addBoolean("debug", "Debug", "", false)
     if p.addSource ~= nil then
@@ -700,6 +725,8 @@ function Prepare(nameOnly)
     T.sessionHigh = instance:addStream("session_high", core.Line, "Session High", "", core.rgb(255, 215, 0), S.first)
     T.sessionLow = instance:addStream("session_low", core.Line, "Session Low", "", core.rgb(135, 206, 250), S.first)
     T.sessionMid = instance:addStream("session_mid", core.Line, "Session Mid", "", core.rgb(255, 255, 255), S.first)
+    T.bis1State = instance:addStream("bis1_state", core.Line, "BIS1 State (1=up,-1=down,0=idle)", "", core.rgb(46, 139, 87), S.first)
+    T.bis2State = instance:addStream("bis2_state", core.Line, "BIS2 State (1=up,-1=down,0=idle)", "", core.rgb(30, 144, 255), S.first)
 
     O.txtConsolidation = instance:createTextOutput("", "SB_CONSOLIDATION", "Arial", 8, core.H_Center, core.V_Top, core.rgb(210, 210, 210), 0)
     local bisAlign = resolveHorizontalAlign(instance.parameters.bislabelalign)
