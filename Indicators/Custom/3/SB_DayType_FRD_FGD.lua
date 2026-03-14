@@ -279,15 +279,15 @@ function GetDayTypeLabels(period, dayRecord)
     end
 
     local labels = {}
-    if rec.isTradeDay or rec.is_frd_trade_day_candidate or rec.is_fgd_trade_day_candidate then
-        labels[#labels + 1] = "Trade Day"
-        return labels
-    end
+    local isFrdEvent = rec.isFrd or rec.is_frd_event_day
+    local isFgdEvent = rec.isFgd or rec.is_fgd_event_day
 
-    if rec.isFgd or rec.is_fgd_event_day then
+    if isFgdEvent then
         labels[#labels + 1] = rec.isHighQualityFgd and "FGD+" or "FGD"
-    elseif rec.isFrd or rec.is_frd_event_day then
+    elseif isFrdEvent then
         labels[#labels + 1] = rec.isHighQualityFrd and "FRD+" or "FRD"
+    elseif rec.isTradeDay then
+        labels[#labels + 1] = "Trade Day"
     elseif instance.parameters.ShowNearMissLabels and rec.nearMissFrd then
         labels[#labels + 1] = near_miss_reason("FRD?")
     elseif instance.parameters.ShowNearMissLabels and rec.nearMissFgd then
