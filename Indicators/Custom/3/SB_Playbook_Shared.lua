@@ -110,11 +110,32 @@ function M.find_history_index_by_time(history, ts, cache)
 end
 
 
-function M.is_weekend_timestamp(ts)
-    if ts == nil or core == nil or type(core.dateToTable) ~= "function" then return false end
+function M.weekday_from_timestamp(ts)
+    if ts == nil or core == nil or type(core.dateToTable) ~= "function" then return nil end
     local ok, t = pcall(core.dateToTable, ts)
-    if not ok or type(t) ~= "table" then return false end
-    return t.wday == 1 or t.wday == 7
+    if not ok or type(t) ~= "table" then return nil end
+    return t.wday
+end
+
+function M.is_weekend_timestamp(ts)
+    local wday = M.weekday_from_timestamp(ts)
+    return wday == 1 or wday == 7
+end
+
+function M.is_effective_trading_day_idx(d1, idx)
+    if d1 == nil or idx == nil then return false end
+
+    local ts = d1:date(idx)
+    local wday = M.weekday_from_timestamp(ts)
+    if wday == nil then return false end
+
+    if wday == 7 then
+        return false
+    end
+
+    -- Sunday-stamped bars may represent Monday sessions on many FX feeds,
+    -- so only Saturday is treated as non-effective here.
+    return true
 end
 
 function M.find_prev_effective_trading_day_idx(d1, day_idx)
@@ -122,8 +143,7 @@ function M.find_prev_effective_trading_day_idx(d1, day_idx)
     local first = d1:first()
     local idx = day_idx - 1
     while idx >= first do
-        local ts = d1:date(idx)
-        if ts ~= nil and not M.is_weekend_timestamp(ts) then
+        if M.is_effective_trading_day_idx(d1, idx) then
             return idx
         end
         idx = idx - 1
