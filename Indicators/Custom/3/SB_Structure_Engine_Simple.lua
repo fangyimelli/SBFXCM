@@ -224,14 +224,33 @@ local function inBisWindow(ts)
     return m >= startMin or m < endMin
 end
 
-local PREV2230_START_MIN = 22 * 60 + 30
-local PREV2230_END_MIN = 23 * 60
-local LONDON_START_MIN = 8 * 60
-local LONDON_END_MIN = 9 * 60
+local function normalizeMinute(value)
+    local n = math.floor(tonumber(value) or 0)
+    if n < 0 then return 0 end
+    if n > 1440 then return 1440 end
+    return n
+end
 
-local function dayKey(ts)
+local function getDayKey(ts, shiftHours)
     if ts == nil then return nil end
-    return math.floor(ts)
+    local shift = tonumber(shiftHours) or 0
+    return math.floor(ts + shift / 24)
+end
+
+local function isInWindow(ts, startMin, endMin)
+    local m = minuteOfDay(ts)
+    if m == nil then return false end
+
+    local startM = normalizeMinute(startMin)
+    local endM = normalizeMinute(endMin)
+    if startM == 1440 then startM = 0 end
+    if endM == 1440 then endM = 0 end
+
+    if startM == endM then return true end
+    if startM < endM then
+        return m >= startM and m < endM
+    end
+    return m >= startM or m < endM
 end
 
 local function resetBisEvent(bis)
@@ -241,12 +260,12 @@ local function resetBisEvent(bis)
     bis.firePrice = nil
 end
 
-local function updateTimeBox(box, ts, high, low, startMin, endMin)
-    local key = dayKey(ts)
-    if key == nil then return end
+local function accumulateBox(box, period)
+    if box == nil or period == nil then return end
+    if period.dayKey == nil then return end
 
-    if box.dayKey ~= key then
-        box.dayKey = key
+    if box.dayKey ~= period.dayKey then
+        box.dayKey = period.dayKey
         box.high = nil
         box.low = nil
         box.startTs = nil
@@ -254,16 +273,12 @@ local function updateTimeBox(box, ts, high, low, startMin, endMin)
         box.isReady = false
     end
 
-    local m = minuteOfDay(ts)
-    if m == nil then return end
-
-    local inRange = (m >= startMin and m < endMin)
-    if inRange then
-        if box.startTs == nil then box.startTs = ts end
-        box.endTs = ts
-        if box.high == nil or high > box.high then box.high = high end
-        if box.low == nil or low < box.low then box.low = low end
-    elseif m >= endMin and box.startTs ~= nil and box.high ~= nil and box.low ~= nil then
+    if period.inWindow then
+        if box.startTs == nil then box.startTs = period.ts end
+        box.endTs = period.ts
+        if box.high == nil or period.high > box.high then box.high = period.high end
+        if box.low == nil or period.low < box.low then box.low = period.low end
+    elseif period.windowEnded and box.startTs ~= nil and box.high ~= nil and box.low ~= nil then
         box.isReady = true
     end
 end
@@ -384,7 +399,13 @@ local function updateBoxesAndBis(period, canRender)
     if not canRender then return end
 
     local ts = src:date(period)
-    local key = dayKey(ts)
+    local shift = instance.parameters.timezoneshifthours or 0
+    local key = getDayKey(ts, shift)
+    local prevStartMin = normalizeMinute(instance.parameters.prevboxstartmin or (22 * 60 + 30))
+    local prevEndMin = normalizeMinute(instance.parameters.prevboxendmin or (24 * 60))
+    local londonStartMin = normalizeMinute(instance.parameters.londonstartmin or (8 * 60))
+    local londonEndMin = normalizeMinute(instance.parameters.londonendmin or (9 * 60))
+    local minute = minuteOfDay(ts)
 
     if st.prev2230Box.dayKey ~= key then
         resetBisEvent(st.bis1)
@@ -393,14 +414,42 @@ local function updateBoxesAndBis(period, canRender)
         resetBisEvent(st.bis2)
     end
 
-    updateTimeBox(st.prev2230Box, ts, src.high[period], src.low[period], PREV2230_START_MIN, PREV2230_END_MIN)
-    updateTimeBox(st.londonBox, ts, src.high[period], src.low[period], LONDON_START_MIN, LONDON_END_MIN)
+    local prevInWindow = isInWindow(ts, prevStartMin, prevEndMin)
+    local prevOwnerDayKey = key
+    if prevInWindow and prevStartMin > (prevEndMin == 1440 and 0 or prevEndMin) and minute ~= nil and minute < (prevEndMin == 1440 and 0 or prevEndMin) then
+        prevOwnerDayKey = key - 1
+    end
+    local prevTargetDayKey = prevInWindow and (prevOwnerDayKey + 1) or key
+    accumulateBox(st.prev2230Box, {
+        dayKey = prevTargetDayKey,
+        ts = ts,
+        high = src.high[period],
+        low = src.low[period],
+        inWindow = prevInWindow,
+        windowEnded = (not prevInWindow) and key >= prevTargetDayKey
+    })
+
+    local londonInWindow = isInWindow(ts, londonStartMin, londonEndMin)
+    local londonEndNorm = (londonEndMin == 1440) and 0 or londonEndMin
+    local londonWindowEnded = (not londonInWindow) and (londonStartMin == londonEndNorm or minute == nil or minute >= londonEndNorm)
+    accumulateBox(st.londonBox, {
+        dayKey = key,
+        ts = ts,
+        high = src.high[period],
+        low = src.low[period],
+        inWindow = londonInWindow,
+        windowEnded = londonWindowEnded
+    })
 
     if ev.bisFired == nil then
-        tryFireBisFromBox(period, ts, src, st.prev2230Box, st.bis1, ev, "bis1")
+        if st.prev2230Box.dayKey == key then
+            tryFireBisFromBox(period, ts, src, st.prev2230Box, st.bis1, ev, "bis1")
+        end
     end
     if ev.bisFired == nil then
-        tryFireBisFromBox(period, ts, src, st.londonBox, st.bis2, ev, "bis2")
+        if st.londonBox.dayKey == key then
+            tryFireBisFromBox(period, ts, src, st.londonBox, st.bis2, ev, "bis2")
+        end
     end
 end
 
@@ -617,6 +666,11 @@ function Init()
     p:addBoolean("bisusetimewindow", "Use BIS Time Window", "", true)
     p:addInteger("biswindowstartmin", "BIS Window Start Minute", "", 0)
     p:addInteger("biswindowendmin", "BIS Window End Minute", "", 570)
+    p:addInteger("prevboxstartmin", "Prev Box Start Minute", "", 22 * 60 + 30)
+    p:addInteger("prevboxendmin", "Prev Box End Minute", "", 24 * 60)
+    p:addInteger("londonstartmin", "London Box Start Minute", "", 8 * 60)
+    p:addInteger("londonendmin", "London Box End Minute", "", 9 * 60)
+    p:addInteger("timezoneshifthours", "Timezone Shift Hours", "", 0)
     p:addBoolean("bisallowrepeatinconsolidation", "Allow Repeat BIS in Consolidation", "", false)
     p:addBoolean("debug", "Debug", "", false)
     if p.addSource ~= nil then
