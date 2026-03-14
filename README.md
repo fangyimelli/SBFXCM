@@ -225,16 +225,19 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 
 ## 10) 後續維護規則（強制）
 
-## 10.1) SB_Structure_Engine profile 建議使用情境
+## 10.1) SB_Structure_Engine 載入指引（先 Simple、後 Engineering）
 
-`Indicators/Custom/3/SB_Structure_Engine.lua` 的 `simplemode=true` 可直接用 profile 套餐，不需要逐項調參：
+- 一般使用者：先掛 `Indicators/Custom/3/SB_Structure_Engine_Simple.lua`。
+  - 對外僅保留少量參數：`profile` + gate（`requiretradeday`）。
+  - upstream 策略固定：優先讀 DayType stream；stream 不可用時，自動 fallback 到 `fallbackistradeday` / `fallbackdaymode`。
+  - 不需要手動輸入 `upstream*` 類參數。
+- 需要診斷/平台相容驗證：再改掛 `Indicators/Custom/3/SB_Structure_Engine.lua`（Engineering 版）。
+  - 保留完整參數與 debug stream，供除錯、回歸與相容性檢查。
 
-- `default`：一般盤勢的基準設定。想先穩定觀察 BIS / Session 行為，先用這個。
-- `tight`：偏保守，要求較長整理與較小漂移。適合波動較亂、想降低誤判時。
-- `loose`：偏寬鬆，較快接受整理成立。適合波動放大、希望更快捕捉結構轉折時。
-
-若你已熟悉參數意義，可關閉 `simplemode` 走 advanced mode，手動調整：
-`consolidationminbars`、`consolidationstalebars`、`atrlen`、`maxconsolidationatrmult`、`maxdriftratio`。
+`profile`（Simple 與 Engineering 共用）建議：
+- `default`：一般盤勢的基準設定。
+- `tight`：偏保守，要求較長整理與較小漂移。
+- `loose`：偏寬鬆，較快接受整理成立。
 
 
 後續只要修改任一 indicator，README 必須同步更新：
@@ -391,14 +394,14 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 - 正式渲染統一走單一 gate：`canRenderStructure = isTradeDay`。
 
 
-### 簡化模式（掛上即用） vs 進階模式（手調）
+### 兩個入口（Simple vs Engineering）
 
-| 模式 | 主要對外參數 | Consolidation 參數來源 | DayType fallback 行為 | 適用情境 |
-| --- | --- | --- | --- | --- |
-| 簡化模式（`simplemode=true`，預設） | `profile`、`requiretradeday`、`allow_render_when_upstream_missing` | 依 `profile` 套用預設（Tight / Default / Loose） | 不讀取 `manualoverride/upstream*`；優先用 DayType stream，缺線時可透過 `allow_render_when_upstream_missing` 放行 | 想快速掛上即用，不手調細項 |
-| 進階模式（`simplemode=false`） | 上述 + `consolidationminbars/atrlen/maxconsolidationatrmult/maxdriftratio/consolidationstalebars/manualoverride/upstream*` | 直接使用使用者填入的進階參數 | 可啟用 `manualoverride=true` 強制採用 `upstream*` 手動值 | 回測/特定商品需要微調行為 |
+| 入口檔案 | 對外參數 | upstream 策略 | 適用情境 |
+| --- | --- | --- | --- |
+| `SB_Structure_Engine_Simple.lua` | 少量：`profile`、`requiretradeday`（另含 fallback 預設） | 固定先讀 DayType stream；不可用時自動 fallback，不要求手動填 upstream 參數 | 一般交易圖快速掛載 |
+| `SB_Structure_Engine.lua` | 完整參數（含進階調校與 debug） | 供工程診斷/平台相容驗證使用 | 回歸、除錯、平台驗證 |
 
-`profile` 對應預設如下（僅 `simplemode=true` 生效）：
+`profile` 對應預設：
 - `Tight`: `minbars=10`, `stalebars=4`, `atrlen=21`, `maxAtrMult=0.8`, `maxdriftratio=0.30`
 - `Default`: `minbars=8`, `stalebars=3`, `atrlen=14`, `maxAtrMult=1.0`, `maxdriftratio=0.45`
 - `Loose`: `minbars=6`, `stalebars=2`, `atrlen=10`, `maxAtrMult=1.2`, `maxdriftratio=0.60`
@@ -428,9 +431,7 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 - BIS 之後：可持續看到 `Session High / Session Low` 更新。
 
 
-### 參數簡化（Structure）
-- `SB_Structure_Engine.lua` 目前已移除 upstream 參數與 stream 連線設定。
-- 掛上後只需關注：
-  - consolidation 參數（Min Bars / Stale Bars / ATR / Range ATR Mult / Drift Ratio）
-  - gate 參數（`requiretradeday` + `istradeday`）
-  - 方向參數（`daymode`，`-1=FRD`, `1=FGD`）
+### 責任邊界（避免回歸）
+- `SB_Structure_Engine_Simple.lua` 只保留正式輸出（Consolidation / BIS / Session High-Low）與最少參數，不承載 debug 參數。
+- `SB_Structure_Engine.lua` 承擔工程版責任：完整參數、除錯與平台相容檢查。
+- 後續若新增 debug 或診斷參數，應加在 Engineering 版，不回灌到 Simple 版。
