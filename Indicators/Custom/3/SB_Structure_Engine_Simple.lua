@@ -122,8 +122,34 @@ local function minuteOfDay(ts)
 end
 
 local function inBisWindow(ts)
+    if not instance.parameters.bisusetimewindow then return true end
     local m = minuteOfDay(ts)
-    return m ~= nil and m >= 0 and m < (9 * 60 + 30)
+    if m == nil then return false end
+    local startMin = math.max(0, math.min(1439, instance.parameters.biswindowstartmin or 0))
+    local endMin = math.max(0, math.min(1439, instance.parameters.biswindowendmin or (9 * 60 + 30)))
+    if startMin == endMin then return true end
+    if startMin < endMin then
+        return m >= startMin and m < endMin
+    end
+    return m >= startMin or m < endMin
+end
+
+local function resolveHorizontalAlign(align)
+    local value = string.lower(tostring(align or "Center"))
+    if value == "left" then return core.H_Left end
+    if value == "right" then return core.H_Right end
+    return core.H_Center
+end
+
+local function renderBisLabel(ev, period, offset)
+    if ev == nil or (not instance.parameters.showbislabel) then return false end
+
+    local isUp = ev.dir == "up"
+    local label = isUp and "BIS UP ✓" or "BIS DOWN ✓"
+    local price = isUp and (ev.price + offset) or (ev.price - offset)
+    local output = isUp and O.txtBisUp or O.txtBisDown
+    safeTextSet(output, period, price, label)
+    return true
 end
 
 local function clearEvents(ev)
@@ -222,21 +248,33 @@ local function detectConsolidation(period, canRender)
             con.lastInsideBar = period
             con.endBar = period
         elseif brokeUp then
-            if canFireBis and ev.lastBisConsolidationId ~= con.id then
+            local repeatedInConsolidation = (not instance.parameters.bisallowrepeatinconsolidation) and ev.lastBisConsolidationId == con.id
+            if canFireBis and not repeatedInConsolidation then
                 con.active = false
                 ev.bisFired = { id = con.id, bar = period, price = src.high[period], dir = "up" }
                 ev.lastBisConsolidationId = con.id
             else
                 con.active = false
+                if not canFireBis then
+                    st.bisBlockReason = "BIS_TIME_WINDOW"
+                elseif repeatedInConsolidation then
+                    st.bisBlockReason = "BIS_ONCE_PER_CONSOLIDATION"
+                end
             end
         elseif brokeDown then
-            if canFireBis and ev.lastBisConsolidationId ~= con.id then
+            local repeatedInConsolidation = (not instance.parameters.bisallowrepeatinconsolidation) and ev.lastBisConsolidationId == con.id
+            if canFireBis and not repeatedInConsolidation then
                 con.brokenDown = true
                 con.active = false
                 ev.bisFired = { id = con.id, bar = period, price = src.low[period], dir = "down" }
                 ev.lastBisConsolidationId = con.id
             else
                 con.active = false
+                if not canFireBis then
+                    st.bisBlockReason = "BIS_TIME_WINDOW"
+                elseif repeatedInConsolidation then
+                    st.bisBlockReason = "BIS_ONCE_PER_CONSOLIDATION"
+                end
             end
         elseif candidate ~= nil then
             con.high = candidate.high
@@ -319,14 +357,19 @@ local function render(period, canRender)
     T.sessionLow[period] = nil
     T.sessionMid[period] = nil
 
-    if not canRender then return end
+    local range = src.high[period] - src.low[period]
+    local offset = range > 0 and range * 0.2 or src:pipSize() * 8
+
+    if not canRender then
+        if instance.parameters.debug then
+            safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, "GATE: WAIT_TRADE_DAY")
+        end
+        return
+    end
 
     if disp.session == nil then
         disp.session = createSessionDisplay(instance.parameters)
     end
-
-    local range = src.high[period] - src.low[period]
-    local offset = range > 0 and range * 0.2 or src:pipSize() * 8
 
     if ev.consolidationCreated ~= nil then
         if disp.setupId ~= ev.consolidationCreated.id then
@@ -388,8 +431,8 @@ local function render(period, canRender)
         disp.consShown = true
     end
 
-    if ev.bisFired ~= nil and not disp.bisShown and inBisWindow(src:date(ev.bisFired.bar)) then
-        safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS " .. ev.bisFired.dir .. " ✓")
+    if ev.bisFired ~= nil and not disp.bisShown then
+        renderBisLabel(ev.bisFired, ev.bisFired.bar, offset)
         disp.bisShown = true
     end
 
@@ -401,6 +444,11 @@ local function render(period, canRender)
     if ev.sessionLowUpdated ~= nil and not disp.sessionLowShown and disp.session.showSessionLabels then
         safeTextSet(O.txtTarget, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "LOS/LOD ✓")
         disp.sessionLowShown = true
+    end
+
+    if instance.parameters.debug then
+        local reason = st.bisBlockReason or "PASS"
+        safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, "GATE: " .. reason)
     end
 end
 
@@ -431,6 +479,18 @@ function Init()
     p:addColor("sessioncolor", "Session Color", "", core.rgb(255, 215, 0))
     p:addInteger("sessionfillalpha", "Session Fill Alpha", "", 30)
     p:addBoolean("showsessionmid", "Show Session Mid", "", false)
+    p:addBoolean("showbislabel", "Show BIS Label", "", true)
+    p:addInteger("bislabelfontsize", "BIS Label Font Size", "", 9)
+    p:addColor("bislabelcolor", "BIS Label Color", "", core.rgb(34, 139, 34))
+    p:addString("bislabelalign", "BIS Label Align", "", "Center")
+    p:addStringAlternative("bislabelalign", "Left", "Left", "")
+    p:addStringAlternative("bislabelalign", "Center", "Center", "")
+    p:addStringAlternative("bislabelalign", "Right", "Right", "")
+    p:addBoolean("bisusetimewindow", "Use BIS Time Window", "", true)
+    p:addInteger("biswindowstartmin", "BIS Window Start Minute", "", 0)
+    p:addInteger("biswindowendmin", "BIS Window End Minute", "", 570)
+    p:addBoolean("bisallowrepeatinconsolidation", "Allow Repeat BIS in Consolidation", "", false)
+    p:addBoolean("debug", "Debug", "", false)
     if p.addSource ~= nil then
         p:addSource("daytype_trade_day_stream", "DayType is_trade_day stream", "")
         p:addSource("daytype_frd_event_stream", "DayType is_frd_event_day stream", "")
@@ -458,8 +518,13 @@ function Prepare(nameOnly)
     T.sessionMid = instance:addStream("session_mid", core.Line, "Session Mid", "", core.rgb(255, 255, 255), S.first)
 
     O.txtConsolidation = instance:createTextOutput("", "SB_CONSOLIDATION", "Arial", 8, core.H_Center, core.V_Top, core.rgb(210, 210, 210), 0)
-    O.txtBis = instance:createTextOutput("", "SB_BIS", "Arial", 9, core.H_Center, core.V_Top, core.rgb(220, 20, 60), 0)
+    local bisAlign = resolveHorizontalAlign(instance.parameters.bislabelalign)
+    local bisFontSize = math.max(6, instance.parameters.bislabelfontsize or 9)
+    local bisColor = instance.parameters.bislabelcolor or core.rgb(34, 139, 34)
+    O.txtBisUp = instance:createTextOutput("", "SB_BIS_UP", "Arial", bisFontSize, bisAlign, core.V_Bottom, bisColor, 0)
+    O.txtBisDown = instance:createTextOutput("", "SB_BIS_DOWN", "Arial", bisFontSize, bisAlign, core.V_Top, core.rgb(220, 20, 60), 0)
     O.txtTarget = instance:createTextOutput("", "SB_TARGET", "Arial", 8, core.H_Center, core.V_Top, core.rgb(255, 215, 0), 0)
+    O.txtDebug = instance:createTextOutput("", "SB_STRUCTURE_DEBUG", "Arial", 7, core.H_Left, core.V_Top, core.rgb(180, 180, 180), 0)
 
     S.state.display.session = createSessionDisplay(instance.parameters)
     O.sessionChannel = createChannelGroup("SB_SESSION_CHANNEL", S.state.display.session.color, S.state.display.session.fillAlpha)
@@ -470,6 +535,7 @@ function Update(period, mode)
 
     local st = S.state
     clearEvents(st.events)
+    st.bisBlockReason = nil
 
     local streamTrade = streamValue(U.tradeDay, period)
     local streamFrd = streamValue(U.frd, period)
