@@ -56,7 +56,17 @@ local S = {
         debug = {
             hasCandidate = false,
             candidateRange = nil,
-            lastTextPeriod = nil
+            lastTextPeriod = nil,
+            minBars = nil,
+            staleBars = nil,
+            atrLen = nil,
+            maxAtrMult = nil,
+            trendLimit = nil,
+            atr = nil,
+            range = nil,
+            rangeLimit = nil,
+            drift = nil,
+            driftLimit = nil
         }
     }
 }
@@ -315,6 +325,32 @@ local function detectConsolidation(period, canRender)
     local candidate = findConsolidationCandidate(src, period, minBars, atrLen, maxAtrMult, trendLimit)
     st.debug.hasCandidate = candidate ~= nil
     st.debug.candidateRange = candidate and candidate.range or nil
+    st.debug.minBars = minBars
+    st.debug.staleBars = staleBars
+    st.debug.atrLen = atrLen
+    st.debug.maxAtrMult = maxAtrMult
+    st.debug.trendLimit = trendLimit
+
+    local start = period - minBars + 1
+    local dbgRange = nil
+    local dbgDrift = nil
+    local dbgAtr = computeATR(src, period, atrLen)
+    if start >= src:first() then
+        local high = src.high[start]
+        local low = src.low[start]
+        for i = start + 1, period do
+            if src.high[i] > high then high = src.high[i] end
+            if src.low[i] < low then low = src.low[i] end
+        end
+        dbgRange = high - low
+        dbgDrift = math.abs(src.close[period] - src.close[start])
+    end
+
+    st.debug.atr = dbgAtr
+    st.debug.range = dbgRange
+    st.debug.rangeLimit = (dbgAtr ~= nil) and (dbgAtr * maxAtrMult) or nil
+    st.debug.drift = dbgDrift
+    st.debug.driftLimit = (dbgRange ~= nil) and (dbgRange * trendLimit) or nil
 
     if con.active and not con.brokenDown then
         local brokeUp = src.close[period] > con.high
@@ -556,7 +592,9 @@ local function render(period, canRender, mode)
             local prevLow = src.low[st.debug.lastTextPeriod] or src.low[period]
             safeTextSet(O.txtDebug, st.debug.lastTextPeriod, prevLow - offset * 2, "")
         end
-        safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, "GATE: " .. reason .. " | " .. consState .. consRange .. " | " .. candidateState .. candRange)
+        local condCfg = string.format("CFG m:%d s:%d a:%d x:%.2f d:%.2f", st.debug.minBars or 0, st.debug.staleBars or 0, st.debug.atrLen or 0, st.debug.maxAtrMult or 0, st.debug.trendLimit or 0)
+        local condVal = string.format("VAL rg:%s/%s dr:%s/%s", st.debug.range and string.format("%.5f", st.debug.range) or "na", st.debug.rangeLimit and string.format("%.5f", st.debug.rangeLimit) or "na", st.debug.drift and string.format("%.5f", st.debug.drift) or "na", st.debug.driftLimit and string.format("%.5f", st.debug.driftLimit) or "na")
+        safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, "GATE: " .. reason .. " | " .. consState .. consRange .. " | " .. candidateState .. candRange .. " | " .. condCfg .. " | " .. condVal)
         st.debug.lastTextPeriod = period
     end
 end
