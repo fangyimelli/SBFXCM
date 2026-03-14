@@ -280,7 +280,13 @@ local function render(period, canRender)
     local sess = st.session
     local ev = st.events
     local disp = st.display
-    local isConfirmedTradeDay = st.day.isFrd or st.day.isFgd
+    local bias = st.day.bias or 0
+    local dayMode = "neutral"
+    if bias < 0 or st.day.isFrd then
+        dayMode = "frd"
+    elseif bias > 0 or st.day.isFgd then
+        dayMode = "fgd"
+    end
 
     T.consolidationHigh[period] = nil
     T.consolidationLow[period] = nil
@@ -289,17 +295,16 @@ local function render(period, canRender)
     T.canRenderStructure[period] = canRender and 1 or 0
     T.gateRequireTradeDay[period] = instance.parameters.requiretradeday and 1 or 0
     T.gateUpstreamTradeDay[period] = st.gate.upstreamTradeDay
+    T.gateTradeDaySemantic[period] = st.day.isTradeDay and 1 or 0
+    T.gateRenderReasonCode[period] = canRender and 1 or 0
     T.gateFinalCanRender[period] = canRender and 1 or 0
 
     local range = src.high[period] - src.low[period]
     local offset = range > 0 and range * 0.2 or src:pipSize() * 8
 
     if not canRender then
+        T.gateRenderReasonCode[period] = 0
         safeTextSet(O.txtGateWait, period, src.high[period] + offset, "WAIT_UPSTREAM_TRADE_DAY")
-        return
-    end
-
-    if not isConfirmedTradeDay then
         return
     end
 
@@ -332,21 +337,21 @@ local function render(period, canRender)
     end
 
     if ev.bisFired ~= nil and not disp.bisShown and inBisWindow(src:date(ev.bisFired.bar)) then
-        if st.day.isFrd and ev.bisFired.dir == "down" then
+        if dayMode == "frd" and ev.bisFired.dir == "down" then
             safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS down ✓")
             disp.bisShown = true
-        elseif st.day.isFgd and ev.bisFired.dir == "up" then
+        elseif dayMode == "fgd" and ev.bisFired.dir == "up" then
             safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS up ✓")
             disp.bisShown = true
         end
     end
 
-    if st.day.isFrd and ev.sessionHighUpdated ~= nil and not disp.targetShown then
+    if dayMode == "frd" and ev.sessionHighUpdated ~= nil and not disp.targetShown then
         safeTextSet(O.txtSessionHigh, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "HOS/HOD ✓")
         disp.targetShown = true
     end
 
-    if st.day.isFgd and ev.sessionLowUpdated ~= nil and not disp.targetShown then
+    if dayMode == "fgd" and ev.sessionLowUpdated ~= nil and not disp.targetShown then
         safeTextSet(O.txtSessionLow, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "LOS/LOD ✓")
         disp.targetShown = true
     end
@@ -428,6 +433,8 @@ function Prepare(nameOnly)
     T.canRenderStructure = instance:addStream("can_render_structure", core.Line, "Can Render Structure", "", core.rgb(169, 169, 169), S.first)
     T.gateRequireTradeDay = instance:addStream("gate_require_trade_day", core.Line, "Gate Require Trade Day", "", core.rgb(112, 128, 144), S.first)
     T.gateUpstreamTradeDay = instance:addStream("gate_upstream_trade_day", core.Line, "Gate Upstream Trade Day", "", core.rgb(143, 188, 143), S.first)
+    T.gateTradeDaySemantic = instance:addStream("gate_trade_day_semantic", core.Line, "Gate Semantic is_trade_day", "", core.rgb(100, 149, 237), S.first)
+    T.gateRenderReasonCode = instance:addStream("gate_render_reason_code", core.Line, "Gate Render Reason (1=render,0=blocked)", "", core.rgb(255, 99, 71), S.first)
     T.gateFinalCanRender = instance:addStream("gate_final_can_render", core.Line, "Gate Final Can Render", "", core.rgb(255, 140, 0), S.first)
 
     O.txtConsolidation = instance:createTextOutput("", "SB_CONSOLIDATION", "Arial", 8, core.H_Center, core.V_Top, core.rgb(210, 210, 210), 0)
