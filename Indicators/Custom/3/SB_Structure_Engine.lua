@@ -516,8 +516,13 @@ local function render(period, canRender)
     end
 
     if instance.parameters.debug then
-        local reason = st.gate.bisBlockReason or "PASS"
-        safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, "GATE: " .. reason)
+        local reason = st.gate.bisBlockReason or st.bisBlockReason or "PASS"
+        local consState = con.active and "CONS: ACTIVE" or "CONS: IDLE"
+        local consRange = ""
+        if con.high ~= nil and con.low ~= nil then
+            consRange = string.format(" [%.5f - %.5f]", con.low, con.high)
+        end
+        safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, "GATE: " .. reason .. " | " .. consState .. consRange)
     end
 end
 
@@ -543,8 +548,8 @@ function Init()
     p:addInteger("atrlen", "ATR Length", "", 14)
     p:addDouble("maxconsolidationatrmult", "Max Consolidation Range ATR Mult", "", 1.0)
     p:addDouble("maxdriftratio", "Max Consolidation Drift Ratio", "", 0.45)
-    p:addColor("conscolor", "Consolidation Channel Color", "", core.rgb(205, 205, 205))
-    p:addInteger("consfillalpha", "Consolidation Fill Alpha", "", 20)
+    p:addColor("conscolor", "Consolidation Channel Color", "", core.rgb(138, 43, 226))
+    p:addInteger("consfillalpha", "Consolidation Fill Alpha", "", 45)
 
     p:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
     p:addBoolean("istradeday", "Is Trade Day", "", true)
@@ -579,8 +584,8 @@ function Prepare(nameOnly)
     instance:name(profile:id() .. "(" .. S.source:name() .. ")")
     if nameOnly then return end
 
-    T.consolidationHigh = instance:addStream("consolidation_high", core.Line, "Consolidation High", "", core.rgb(205, 205, 205), S.first)
-    T.consolidationLow = instance:addStream("consolidation_low", core.Line, "Consolidation Low", "", core.rgb(205, 205, 205), S.first)
+    T.consolidationHigh = instance:addStream("consolidation_high", core.Line, "Consolidation High", "", instance.parameters.conscolor, S.first)
+    T.consolidationLow = instance:addStream("consolidation_low", core.Line, "Consolidation Low", "", instance.parameters.conscolor, S.first)
     T.consolidationHighBand = addInternalBandStream("consolidation_high_band", "Consolidation High Band", S.first, instance.parameters.conscolor)
     T.consolidationLowBand = addInternalBandStream("consolidation_low_band", "Consolidation Low Band", S.first, instance.parameters.conscolor)
     T.sessionHigh = instance:addStream("session_high", core.Line, "Session High", "", core.rgb(255, 215, 0), S.first)
