@@ -1157,7 +1157,12 @@ build_day_record = function(day_idx)
 
     -- Layer D: Next Trading Day Trade Day (weekend/non-effective D1 rows are skipped)
     local prev_rec = prev_idx ~= nil and build_day_record(prev_idx) or nil
-    local prevWasEvent = prev_rec ~= nil and (prev_rec.basicFrd or prev_rec.basicFgd)
+    local dayBias = prevIsPump and 1 or (prevIsDump and -1 or 0)
+    local prevWasEvent = prev_rec ~= nil and (prev_rec.is_frd_event_day or prev_rec.is_fgd_event_day)
+    local trendContinuation = prevWasEvent
+        and dayBias ~= 0
+        and prev_rec.day_bias ~= nil
+        and dayBias == prev_rec.day_bias
     local isTradeDay = (not isFrdEvent) and (not isFgdEvent) and prevWasEvent
     local isFrdTradeCandidate = isTradeDay and prev_rec ~= nil and prev_rec.basicFrd
     local isFgdTradeCandidate = isTradeDay and prev_rec ~= nil and prev_rec.basicFgd
@@ -1238,7 +1243,9 @@ build_day_record = function(day_idx)
 
         has_valid_rectangle = rect.valid, rectangle_high = rect.high, rectangle_low = rect.low,
         rectangle_height = rect.height, rectangle_bar_count = rect.bar_count, rectangle_start_time = rect.start_time, rectangle_end_time = rect.end_time,
-        daytype_bias = prevIsPump and 1 or (prevIsDump and -1 or 0),
+        daytype_bias = dayBias,
+        day_bias = dayBias,
+        trend_continuation = trendContinuation,
         event_day_type = isFrdEvent and -1 or (isFgdEvent and 1 or 0),
         repeated_pump_score = prevIsPump and 1 or 0, repeated_dump_score = prevIsDump and 1 or 0, consolidation_score = rect.valid and 1 or 0, three_levels_score = 0,
 
@@ -1339,6 +1346,7 @@ function Prepare(nameOnly)
     T.frdTrade = instance:addStream("is_frd_trade_day_candidate", core.Line, "FRD Trade Candidate", "", core.rgb(255,140,0), S.first)
     T.fgdTrade = instance:addStream("is_fgd_trade_day_candidate", core.Line, "FGD Trade Candidate", "", core.rgb(255,200,0), S.first)
     T.tradeDay = instance:addStream("is_trade_day", core.Line, "Trade Day", "", core.rgb(255,215,0), S.first)
+    T.trendContinuation = instance:addStream("trend_continuation", core.Line, "Trend Continuation", "", core.rgb(255,255,0), S.first)
 
     T.rectValid = instance:addStream("has_valid_rectangle", core.Line, "Rectangle Valid", "", core.rgb(135,206,250), S.first)
     T.rectHigh = instance:addStream("rectangle_high", core.Line, "Rectangle High", "", core.rgb(255,255,255), S.first)
@@ -1498,6 +1506,7 @@ function Update(period, mode)
         T.frdTrade[period] = 0
         T.fgdTrade[period] = 0
         T.tradeDay[period] = 0
+        T.trendContinuation[period] = 0
         T.rectValid[period] = 0
         T.rectHigh[period] = 0
         T.rectLow[period] = 0
@@ -1547,6 +1556,7 @@ function Update(period, mode)
     T.frdTrade[period] = d.is_frd_trade_day_candidate and 1 or 0
     T.fgdTrade[period] = d.is_fgd_trade_day_candidate and 1 or 0
     T.tradeDay[period] = d.isTradeDay and 1 or 0
+    T.trendContinuation[period] = d.trend_continuation and 1 or 0
 
     T.rectValid[period] = d.has_valid_rectangle and 1 or 0
     T.rectHigh[period] = d.rectangle_high or 0
