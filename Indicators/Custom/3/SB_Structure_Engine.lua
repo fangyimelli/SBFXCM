@@ -624,8 +624,8 @@ function Init()
     p:addColor("conscolor", "Consolidation Channel Color", "", core.rgb(138, 43, 226))
     p:addInteger("consfillalpha", "Consolidation Fill Alpha", "", 45)
 
-    p:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
-    p:addBoolean("istradeday", "Is Trade Day", "", true)
+    p:addBoolean("requiretradeday", "Require Trade Day Gate", "", false)
+    p:addBoolean("istradeday", "Is Trade Day", "", false)
     p:addBoolean("showsessionhigh", "Show Session High", "", true)
     p:addBoolean("showsessionlow", "Show Session Low", "", true)
     p:addBoolean("showsessionlabels", "Show Session Labels", "", true)
@@ -705,9 +705,8 @@ function Update(period, mode)
     gate.upstreamTradeDay = st.day.isTradeDay and 1 or 0
     gate.bisBlockReason = nil
 
-    local canRenderStructure =
-        (not instance.parameters.requiretradeday) or
-        st.day.isTradeDay
+    -- User requirement: do not gate structure rendering by trade-day semantics.
+    local canRenderStructure = true
 
     detectConsolidation(period, canRenderStructure)
     updateSession(period, canRenderStructure)

@@ -583,7 +583,7 @@ function Init()
     p:addStringAlternative("profile", "Tight", "Tight", "")
     p:addStringAlternative("profile", "Loose", "Loose", "")
 
-    p:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
+    p:addBoolean("requiretradeday", "Require Trade Day Gate", "", false)
     p:addBoolean("fallbackistradeday", "Fallback Is Trade Day", "", true)
     p:addBoolean("showsessionhigh", "Show Session High", "", true)
     p:addBoolean("showsessionlow", "Show Session Low", "", true)
@@ -684,7 +684,8 @@ function Update(period, mode)
         st.day.bias = 0
     end
 
-    local canRenderStructure = (not instance.parameters.requiretradeday) or st.day.isTradeDay
+    -- User requirement: do not gate structure rendering by trade-day semantics.
+    local canRenderStructure = true
 
     detectConsolidation(period, canRenderStructure)
     updateSession(period, canRenderStructure)
