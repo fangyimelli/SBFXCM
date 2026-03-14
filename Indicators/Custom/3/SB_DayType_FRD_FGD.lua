@@ -349,15 +349,45 @@ local function build_audit_panel_lines(lastDayIdx)
     local rec = get_day_mark_by_idx(lastDayIdx)
     if rec == nil then return lines end
 
+    local function fmt_daily(label, value)
+        if value == nil then return label .. ": N/A" end
+        return string.format("%s: %.4f", label, tonumber(value) or 0)
+    end
+
+    local eventAtr = tonumber(rec.eventAtr)
+    local prevAtr = tonumber(rec.prevAtr)
+    local rectangleHeight = tonumber(rec.rectangle_height)
+    local prevRange = tonumber(rec.prevRange)
+    local eventRange = tonumber(rec.eventRange)
+    local prevBodyRatio = tonumber(rec.prevBodyRatio)
+    local eventClv = tonumber(rec.eventClv)
+    local reclaimRatioFrd = tonumber(rec.reclaimRatioFrd)
+    local reclaimRatioFgd = tonumber(rec.reclaimRatioFgd)
+    local reclaimRatio = nil
+    if rec.isFrd then
+        reclaimRatio = reclaimRatioFrd
+    elseif rec.isFgd then
+        reclaimRatio = reclaimRatioFgd
+    elseif reclaimRatioFrd ~= nil and reclaimRatioFgd ~= nil then
+        reclaimRatio = math.max(reclaimRatioFrd, reclaimRatioFgd)
+    else
+        reclaimRatio = reclaimRatioFrd or reclaimRatioFgd
+    end
+
+    local rectangleHeightAtr = (rectangleHeight ~= nil and eventAtr ~= nil and eventAtr > 0) and (rectangleHeight / eventAtr) or nil
+    local pumpDumpAtrMult = (prevRange ~= nil and prevAtr ~= nil and prevAtr > 0) and (prevRange / prevAtr) or nil
+    local impulseAtrMult = pumpDumpAtrMult
+    local eventAtrMult = (eventRange ~= nil and eventAtr ~= nil and eventAtr > 0) and (eventRange / eventAtr) or nil
+
     lines[#lines + 1] = string.format("FRD=%s FGD=%s TradeDay=%s", yn(rec.isFrd), yn(rec.isFgd), yn(rec.isTradeDay))
-    lines[#lines + 1] = string.format("Max Rectangle Height ATR: %.4f", tonumber(instance.parameters.max_rectangle_height_atr) or 0)
-    lines[#lines + 1] = string.format("Pump/Dump ATR Mult: %.4f", tonumber(instance.parameters.atr_mult) or 0)
-    lines[#lines + 1] = string.format("Impulse ATR Mult: %.4f", tonumber(instance.parameters.impulseAtrMult) or 0)
-    lines[#lines + 1] = string.format("Impulse Close Extreme: %.4f", tonumber(instance.parameters.impulseCloseExtreme) or 0)
-    lines[#lines + 1] = string.format("Impulse Body Ratio Min: %.4f", tonumber(instance.parameters.impulseBodyRatioMin) or 0)
-    lines[#lines + 1] = string.format("Event ATR Mult: %.4f", tonumber(instance.parameters.eventAtrMult) or 0)
-    lines[#lines + 1] = string.format("Event Close Extreme: %.4f", tonumber(instance.parameters.eventCloseExtreme) or 0)
-    lines[#lines + 1] = string.format("Reclaim Ratio Min: %.4f", tonumber(instance.parameters.reclaimRatioMin) or 0)
+    lines[#lines + 1] = fmt_daily("Max Rectangle Height ATR", rectangleHeightAtr)
+    lines[#lines + 1] = fmt_daily("Pump/Dump ATR Mult", pumpDumpAtrMult)
+    lines[#lines + 1] = fmt_daily("Impulse ATR Mult", impulseAtrMult)
+    lines[#lines + 1] = fmt_daily("Impulse Close Extreme", rec.prevClv)
+    lines[#lines + 1] = fmt_daily("Impulse Body Ratio Min", prevBodyRatio)
+    lines[#lines + 1] = fmt_daily("Event ATR Mult", eventAtrMult)
+    lines[#lines + 1] = fmt_daily("Event Close Extreme", eventClv)
+    lines[#lines + 1] = fmt_daily("Reclaim Ratio Min", reclaimRatio)
 
     return lines
 end
