@@ -66,25 +66,25 @@ local O = {}
 
 local PROFILE_PRESETS = {
     default = {
-        consolidationminbars = 8,
-        consolidationstalebars = 3,
+        consolidationminbars = 6,
+        consolidationstalebars = 4,
         atrlen = 14,
+        maxconsolidationatrmult = 1.35,
+        maxdriftratio = 0.65
+    },
+    tight = {
+        consolidationminbars = 8,
+        consolidationstalebars = 5,
+        atrlen = 21,
         maxconsolidationatrmult = 1.0,
         maxdriftratio = 0.45
     },
-    tight = {
-        consolidationminbars = 10,
-        consolidationstalebars = 4,
-        atrlen = 21,
-        maxconsolidationatrmult = 0.8,
-        maxdriftratio = 0.30
-    },
     loose = {
-        consolidationminbars = 6,
-        consolidationstalebars = 2,
+        consolidationminbars = 5,
+        consolidationstalebars = 3,
         atrlen = 10,
-        maxconsolidationatrmult = 1.2,
-        maxdriftratio = 0.60
+        maxconsolidationatrmult = 1.5,
+        maxdriftratio = 0.75
     }
 }
 
@@ -578,11 +578,11 @@ function Init()
     p:addStringAlternative("profile", "Tight", "Tight", "")
     p:addStringAlternative("profile", "Loose", "Loose", "")
 
-    p:addInteger("consolidationminbars", "Consolidation Min Bars", "", 8)
-    p:addInteger("consolidationstalebars", "Consolidation Stale Bars", "", 3)
+    p:addInteger("consolidationminbars", "Consolidation Min Bars", "", 6)
+    p:addInteger("consolidationstalebars", "Consolidation Stale Bars", "", 4)
     p:addInteger("atrlen", "ATR Length", "", 14)
-    p:addDouble("maxconsolidationatrmult", "Max Consolidation Range ATR Mult", "", 1.0)
-    p:addDouble("maxdriftratio", "Max Consolidation Drift Ratio", "", 0.45)
+    p:addDouble("maxconsolidationatrmult", "Max Consolidation Range ATR Mult", "", 1.35)
+    p:addDouble("maxdriftratio", "Max Consolidation Drift Ratio", "", 0.65)
     p:addColor("conscolor", "Consolidation Channel Color", "", core.rgb(138, 43, 226))
     p:addInteger("consfillalpha", "Consolidation Fill Alpha", "", 45)
 

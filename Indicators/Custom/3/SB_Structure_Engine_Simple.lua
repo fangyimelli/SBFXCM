@@ -68,9 +68,9 @@ local T = {}
 local O = {}
 
 local PROFILE_PRESETS = {
-    default = { consolidationminbars = 8, consolidationstalebars = 3, atrlen = 14, maxconsolidationatrmult = 1.0, maxdriftratio = 0.45 },
-    tight = { consolidationminbars = 10, consolidationstalebars = 4, atrlen = 21, maxconsolidationatrmult = 0.8, maxdriftratio = 0.30 },
-    loose = { consolidationminbars = 6, consolidationstalebars = 2, atrlen = 10, maxconsolidationatrmult = 1.2, maxdriftratio = 0.60 }
+    default = { consolidationminbars = 6, consolidationstalebars = 4, atrlen = 14, maxconsolidationatrmult = 1.35, maxdriftratio = 0.65 },
+    tight = { consolidationminbars = 8, consolidationstalebars = 5, atrlen = 21, maxconsolidationatrmult = 1.0, maxdriftratio = 0.45 },
+    loose = { consolidationminbars = 5, consolidationstalebars = 3, atrlen = 10, maxconsolidationatrmult = 1.5, maxdriftratio = 0.75 }
 }
 
 local function resolveProfileName(rawProfile)
