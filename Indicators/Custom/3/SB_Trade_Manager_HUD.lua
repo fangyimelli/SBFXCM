@@ -136,12 +136,13 @@ function Update(period, mode)
     writeText(T.flow, period, "Flow: DayType -> Structure -> Entry -> HUD (HUD display-only)", 0)
 
     local dayTypeTxt=string.format(
-        "DayType SSOT: FRD=%s FGD=%s TradeDay=%s Bias=%s RectValid=%s",
+        "DayType SSOT: FRD=%s FGD=%s TradeDay=%s Bias=%s RectValid=%s TC=%s",
         btxt(d and d.is_frd_event_day,"true","false"),
         btxt(d and d.is_fgd_event_day,"true","false"),
         btxt(d and d.is_trade_day,"true","false"),
         d and tostring(d.day_bias) or "n/a",
-        btxt(d and d.rectangle_valid,"true","false")
+        btxt(d and d.rectangle_valid,"true","false"),
+        btxt(d and d.trend_continuation,"Y","N")
     )
 
     local structureTxt=string.format(

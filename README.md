@@ -116,6 +116,7 @@
 - `is_fgd_event_day`
 - `is_frd_trade_day_candidate`
 - `is_fgd_trade_day_candidate`
+- `trend_continuation`（條件：前一個**有效交易日**必須是 `FRD/FGD event day`，且 `day_bias` 與前一有效交易日同向；前一有效交易日索引必須透過 `find_prev_effective_trading_day_idx()` 取得，避免週末跨日誤判）
 
 Label 顯示：
 - `FRD` / `FRD+`
@@ -173,7 +174,7 @@ Entry 層目前正式落地：
 
 HUD 只做文字化狀態展示：
 - `hud_flow`
-- `hud_daytype_state`
+- `hud_daytype_state`（含 `TC=Y/N`，對應 `trend_continuation`）
 - `hud_structure_state`
 - `hud_entry_state`
 - `hud_score_state`
