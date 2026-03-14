@@ -52,6 +52,10 @@ local S = {
         gate = {
             hasUpstream = false,
             upstreamTradeDay = nil
+        },
+        debug = {
+            hasCandidate = false,
+            candidateRange = nil
         }
     }
 }
@@ -175,6 +179,14 @@ local function minuteOfDay(ts)
     return m
 end
 
+local function isLastVisiblePeriod(period)
+    if S.source ~= nil and type(S.source.size) == "function" then
+        local last = S.source:size() - 1
+        return period >= last
+    end
+    return true
+end
+
 local function inBisWindow(ts)
     if not instance.parameters.bisusetimewindow then return true end
     local m = minuteOfDay(ts)
@@ -290,6 +302,8 @@ local function detectConsolidation(period, canRender)
     local trendLimit = math.max(0.05, math.min(1.0, params.maxdriftratio))
 
     local candidate = findConsolidationCandidate(src, period, minBars, atrLen, maxAtrMult, trendLimit)
+    st.debug.hasCandidate = candidate ~= nil
+    st.debug.candidateRange = candidate and candidate.range or nil
 
     if con.active and not con.brokenDown then
         local brokeUp = src.close[period] > con.high
@@ -395,7 +409,7 @@ local function updateSession(period, canRender)
     end
 end
 
-local function render(period, canRender)
+local function render(period, canRender, mode)
     local src = S.source
     local st = S.state
     local con = st.consolidation
@@ -515,14 +529,19 @@ local function render(period, canRender)
         disp.sessionLowShown = true
     end
 
-    if instance.parameters.debug then
+    if instance.parameters.debug and isLastVisiblePeriod(period) then
         local reason = st.gate.bisBlockReason or st.bisBlockReason or "PASS"
         local consState = con.active and "CONS: ACTIVE" or "CONS: IDLE"
+        local candidateState = st.debug.hasCandidate and "CAND: YES" or "CAND: NO"
         local consRange = ""
         if con.high ~= nil and con.low ~= nil then
             consRange = string.format(" [%.5f - %.5f]", con.low, con.high)
         end
-        safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, "GATE: " .. reason .. " | " .. consState .. consRange)
+        local candRange = ""
+        if st.debug.candidateRange ~= nil then
+            candRange = string.format(" | CAND_R: %.5f", st.debug.candidateRange)
+        end
+        safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, "GATE: " .. reason .. " | " .. consState .. consRange .. " | " .. candidateState .. candRange)
     end
 end
 
@@ -638,7 +657,7 @@ function Update(period, mode)
 
     detectConsolidation(period, canRenderStructure)
     updateSession(period, canRenderStructure)
-    render(period, canRenderStructure)
+    render(period, canRenderStructure, mode)
 end
 
 function ReleaseInstance() end
