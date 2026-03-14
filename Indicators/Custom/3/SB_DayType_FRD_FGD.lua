@@ -915,8 +915,11 @@ local function find_prev_effective_trading_day_idx(day_idx)
     local first = S.d1:first()
     local idx = day_idx - 1
     while idx >= first do
-        local chartKey = chart_date_key_for_d1_idx(idx)
-        if chartKey ~= nil and not is_weekend_timestamp(chartKey) then
+        -- Use the raw D1 timestamp for effective-trading-day filtering so
+        -- Sunday bars are never treated as valid previous trading days.
+        -- chart_date_key_for_d1_idx remains for display/report labels only.
+        local ts = S.d1:date(idx)
+        if ts ~= nil and not is_weekend_timestamp(ts) then
             return idx
         end
         idx = idx - 1
