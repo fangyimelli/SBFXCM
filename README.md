@@ -377,6 +377,19 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
   - `daymode`（`-1=FRD`, `1=FGD`）
 - 正式渲染統一走單一 gate：`canRenderStructure = isTradeDay`。
 
+
+### 簡化模式（掛上即用） vs 進階模式（手調）
+
+| 模式 | 主要對外參數 | Consolidation 參數來源 | DayType fallback 行為 | 適用情境 |
+| --- | --- | --- | --- | --- |
+| 簡化模式（`simplemode=true`，預設） | `profile`、`requiretradeday`、`allow_render_when_upstream_missing` | 依 `profile` 套用預設（Conservative / Default / Aggressive） | 不讀取 `manualoverride/upstream*`；優先用 DayType stream，缺線時可透過 `allow_render_when_upstream_missing` 放行 | 想快速掛上即用，不手調細項 |
+| 進階模式（`simplemode=false`） | 上述 + `consolidationminbars/atrlen/maxconsolidationatrmult/maxdriftratio/consolidationstalebars/manualoverride/upstream*` | 直接使用使用者填入的進階參數 | 可啟用 `manualoverride=true` 強制採用 `upstream*` 手動值 | 回測/特定商品需要微調行為 |
+
+`profile` 對應預設如下（僅 `simplemode=true` 生效）：
+- `Conservative`: `minbars=10`, `stalebars=4`, `atrlen=21`, `maxAtrMult=0.8`, `maxdriftratio=0.30`
+- `Default`: `minbars=8`, `stalebars=3`, `atrlen=14`, `maxAtrMult=1.0`, `maxdriftratio=0.45`
+- `Aggressive`: `minbars=6`, `stalebars=2`, `atrlen=10`, `maxAtrMult=1.2`, `maxdriftratio=0.60`
+
 ### Consolidation 判定（程式化）
 - 建立最小 bars 視窗（預設 8）
 - 區間寬度需滿足：
