@@ -112,6 +112,16 @@ local function createChannelGroup(name, color, alpha)
     return group
 end
 
+local function addInternalBandStream(id, title, first, color)
+    if type(instance.addInternalStream) == "function" then
+        local ok, stream = pcall(function()
+            return instance:addInternalStream(id, core.Line, title, "", color, first)
+        end)
+        if ok and stream ~= nil then return stream end
+    end
+    return instance:addStream(id, core.Line, title, "", color, first)
+end
+
 local function minuteOfDay(ts)
     if ts == nil then return nil end
     local f = ts - math.floor(ts)
@@ -353,6 +363,8 @@ local function render(period, canRender)
 
     T.consolidationHigh[period] = nil
     T.consolidationLow[period] = nil
+    T.consolidationHighBand[period] = nil
+    T.consolidationLowBand[period] = nil
     T.sessionHigh[period] = nil
     T.sessionLow[period] = nil
     T.sessionMid[period] = nil
@@ -399,9 +411,16 @@ local function render(period, canRender)
         disp.consLow = con.low
     end
 
-    if disp.consStartBar ~= nil and disp.consEndBar ~= nil and disp.consHigh ~= nil and disp.consLow ~= nil and period >= disp.consStartBar and period <= disp.consEndBar then
+    if con.active and disp.consHigh ~= nil and disp.consLow ~= nil then
         T.consolidationHigh[period] = disp.consHigh
         T.consolidationLow[period] = disp.consLow
+        T.consolidationHighBand[period] = disp.consHigh
+        T.consolidationLowBand[period] = disp.consLow
+    else
+        T.consolidationHigh[period] = nil
+        T.consolidationLow[period] = nil
+        T.consolidationHighBand[period] = nil
+        T.consolidationLowBand[period] = nil
     end
 
     if sess.active and sess.startBar ~= nil then
@@ -478,6 +497,8 @@ function Init()
     p:addStringAlternative("sessionlinestyle", "Dot", "Dot", "")
     p:addColor("sessioncolor", "Session Color", "", core.rgb(255, 215, 0))
     p:addInteger("sessionfillalpha", "Session Fill Alpha", "", 30)
+    p:addColor("conscolor", "Consolidation Channel Color", "", core.rgb(205, 205, 205))
+    p:addInteger("consfillalpha", "Consolidation Fill Alpha", "", 20)
     p:addBoolean("showsessionmid", "Show Session Mid", "", false)
     p:addBoolean("showbislabel", "Show BIS Label", "", true)
     p:addInteger("bislabelfontsize", "BIS Label Font Size", "", 9)
@@ -513,6 +534,8 @@ function Prepare(nameOnly)
 
     T.consolidationHigh = instance:addStream("consolidation_high", core.Line, "Consolidation High", "", core.rgb(205, 205, 205), S.first)
     T.consolidationLow = instance:addStream("consolidation_low", core.Line, "Consolidation Low", "", core.rgb(205, 205, 205), S.first)
+    T.consolidationHighBand = addInternalBandStream("consolidation_high_band", "Consolidation High Band", S.first, instance.parameters.conscolor)
+    T.consolidationLowBand = addInternalBandStream("consolidation_low_band", "Consolidation Low Band", S.first, instance.parameters.conscolor)
     T.sessionHigh = instance:addStream("session_high", core.Line, "Session High", "", core.rgb(255, 215, 0), S.first)
     T.sessionLow = instance:addStream("session_low", core.Line, "Session Low", "", core.rgb(135, 206, 250), S.first)
     T.sessionMid = instance:addStream("session_mid", core.Line, "Session Mid", "", core.rgb(255, 255, 255), S.first)
@@ -527,6 +550,7 @@ function Prepare(nameOnly)
     O.txtDebug = instance:createTextOutput("", "SB_STRUCTURE_DEBUG", "Arial", 7, core.H_Left, core.V_Top, core.rgb(180, 180, 180), 0)
 
     S.state.display.session = createSessionDisplay(instance.parameters)
+    O.consolidationChannel = createChannelGroup("SB_CONSOLIDATION_CHANNEL", instance.parameters.conscolor, instance.parameters.consfillalpha)
     O.sessionChannel = createChannelGroup("SB_SESSION_CHANNEL", S.state.display.session.color, S.state.display.session.fillAlpha)
 end
 
