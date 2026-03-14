@@ -332,7 +332,13 @@ local function build_audit_lines(day_idx, dayRecord)
     if not instance.parameters.debug then return {} end
 
     if rec.isTradeDay then
-        return {"From:" .. tostring(rec.tradeFromRule or "N/A")}
+        local fromRule = tostring(rec.tradeFromRule or "N/A")
+        if fromRule == "FRD" then
+            return {"From:" .. fromRule, "RD confirmed"}
+        elseif fromRule == "FGD" then
+            return {"From:" .. fromRule, "GD confirmed"}
+        end
+        return {"From:" .. fromRule}
     end
 
     if not (rec.isFrd or rec.isFgd or rec.nearMissFrd or rec.nearMissFgd) then return {} end
