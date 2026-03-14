@@ -885,23 +885,9 @@ local function chart_date_key_for_d1_idx(day_idx)
     if sourceDate == nil then return nil end
 
     -- D1 timestamp in FX often marks session-open (previous calendar day evening).
-    -- Shift +1 day first so debug/report date follows chart trading day.
-    local chartKey = day_key(sourceDate + 1)
-
-    -- If shifted date lands on weekend, roll forward to Monday so the key
-    -- remains aligned to an effective trading day.
-    if core ~= nil and type(core.dateToTable) == "function" then
-        local ok, t = pcall(core.dateToTable, chartKey)
-        if ok and type(t) == "table" and t.wday ~= nil then
-            if t.wday == 7 then
-                chartKey = chartKey + 2
-            elseif t.wday == 1 then
-                chartKey = chartKey + 1
-            end
-        end
-    end
-
-    return chartKey
+    -- Shift +1 day so debug/report date follows chart trading day, but do not
+    -- force weekend->Monday here (that can collapse distinct bars into same date).
+    return day_key(sourceDate + 1)
 end
 
 local function format_date_key(dateKey)
