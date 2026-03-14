@@ -354,6 +354,10 @@ local function renderBisLabel(ev, period, offset)
     return true
 end
 
+local function formatBoxLabel(boxName, high, low)
+    return string.format("%s H: %.5f L: %.5f", boxName, high, low)
+end
+
 local function clearEvents(ev)
     ev.consolidationCreated = nil
     ev.bis1Fired = nil
@@ -473,10 +477,10 @@ local function updateBoxesAndBis(period, canRender)
         windowEnded = londonWindowEnded
     })
 
-    if st.prev2230Box.dayKey == key then
+    if instance.parameters.showbis1 and st.prev2230Box.dayKey == key then
         tryFireBisFromBox(period, ts, src, st.prev2230Box, st.bis1, ev, "bis1", "bis1Fired")
     end
-    if st.londonBox.dayKey == key then
+    if instance.parameters.showbis2 and st.londonBox.dayKey == key then
         tryFireBisFromBox(period, ts, src, st.londonBox, st.bis2, ev, "bis2", "bis2Fired")
     end
 end
@@ -532,6 +536,16 @@ local function render(period, canRender, mode)
     T.sessionHigh[period] = nil
     T.sessionLow[period] = nil
     T.sessionMid[period] = nil
+    T.prev2230High[period] = nil
+    T.prev2230Low[period] = nil
+    T.prev2230HighBand[period] = nil
+    T.prev2230LowBand[period] = nil
+    T.prev2230Mid[period] = nil
+    T.londonHigh[period] = nil
+    T.londonLow[period] = nil
+    T.londonHighBand[period] = nil
+    T.londonLowBand[period] = nil
+    T.londonMid[period] = nil
     T.canRenderStructure[period] = canRender and 1 or 0
     T.gateRequireTradeDay[period] = instance.parameters.requiretradeday and 1 or 0
     T.gateUpstreamTradeDay[period] = st.gate.upstreamTradeDay
@@ -625,6 +639,52 @@ local function render(period, canRender, mode)
         end
     end
 
+    local ts = src:date(period)
+    local minute = minuteOfDay(ts)
+    local shift = instance.parameters.timezoneshifthours or 0
+    local key = getDayKey(ts, shift)
+    local bisExtendMin = normalizeMinute(instance.parameters.biswindowendmin or (9 * 60 + 30))
+    local londonStartMin = normalizeMinute(instance.parameters.londonstartmin or (8 * 60))
+    local londonEndMin = normalizeMinute(instance.parameters.londonendmin or (9 * 60))
+    local londonEndNorm = (londonEndMin == 1440) and 0 or londonEndMin
+
+    local prevBox = st.prev2230Box
+    local showPrev2230 = instance.parameters.showprev2230box and prevBox ~= nil and prevBox.high ~= nil and prevBox.low ~= nil and prevBox.dayKey == key
+    local prevBoxVisible = showPrev2230 and minute ~= nil and minute < bisExtendMin
+    if prevBoxVisible then
+        T.prev2230High[period] = prevBox.high
+        T.prev2230Low[period] = prevBox.low
+        T.prev2230HighBand[period] = prevBox.high
+        T.prev2230LowBand[period] = prevBox.low
+        if instance.parameters.showboxmid then
+            T.prev2230Mid[period] = (prevBox.high + prevBox.low) / 2
+        end
+        if instance.parameters.showboxlabels then
+            safeTextSet(O.txtPrev2230Box, period, prevBox.high + offset, formatBoxLabel("Prev 22:30", prevBox.high, prevBox.low))
+        end
+    end
+
+    local londonBox = st.londonBox
+    local showLondon = instance.parameters.showlondonbox and londonBox ~= nil and londonBox.high ~= nil and londonBox.low ~= nil and londonBox.dayKey == key
+    local londonVisible = false
+    if showLondon and minute ~= nil then
+        local inLondonWindow = isInWindow(ts, londonStartMin, londonEndMin)
+        local inExtension = londonBox.isReady and minute >= londonEndNorm and minute < bisExtendMin
+        londonVisible = inLondonWindow or inExtension
+    end
+    if londonVisible then
+        T.londonHigh[period] = londonBox.high
+        T.londonLow[period] = londonBox.low
+        T.londonHighBand[period] = londonBox.high
+        T.londonLowBand[period] = londonBox.low
+        if instance.parameters.showboxmid then
+            T.londonMid[period] = (londonBox.high + londonBox.low) / 2
+        end
+        if instance.parameters.showboxlabels then
+            safeTextSet(O.txtLondonBox, period, londonBox.high + offset, formatBoxLabel("London", londonBox.high, londonBox.low))
+        end
+    end
+
     if ev.consolidationCreated ~= nil and not disp.consShown then
         safeTextSet(O.txtConsolidation, ev.consolidationCreated.bar, ev.consolidationCreated.low - offset, "CONS ✓")
         disp.consShown = true
@@ -714,6 +774,16 @@ function Init()
     p:addInteger("sessionfillalpha", "Session Fill Alpha", "", 30)
     p:addBoolean("showsessionmid", "Show Session Mid", "", false)
     p:addBoolean("showbislabel", "Show BIS Label", "", true)
+    p:addBoolean("showbis1", "Enable BIS1 (Prev 22:30)", "", true)
+    p:addBoolean("showbis2", "Enable BIS2 (London)", "", true)
+    p:addBoolean("showprev2230box", "Show Prev 22:30 Box", "", true)
+    p:addColor("prev2230color", "Prev 22:30 Box Color", "", core.rgb(255, 140, 0))
+    p:addInteger("prev2230fillalpha", "Prev 22:30 Box Fill Alpha", "", 25)
+    p:addBoolean("showlondonbox", "Show London Box", "", true)
+    p:addColor("londoncolor", "London Box Color", "", core.rgb(30, 144, 255))
+    p:addInteger("londonfillalpha", "London Box Fill Alpha", "", 25)
+    p:addBoolean("showboxlabels", "Show Box Labels", "", true)
+    p:addBoolean("showboxmid", "Show Box Mid Line", "", false)
     p:addInteger("bislabelfontsize", "BIS Label Font Size", "", 9)
     p:addColor("bislabelcolor", "BIS Label Color", "", core.rgb(34, 139, 34))
     p:addString("bislabelalign", "BIS Label Align", "", "Center")
@@ -755,6 +825,16 @@ function Prepare(nameOnly)
     T.gateFinalCanRender = instance:addStream("gate_final_can_render", core.Line, "Gate Final Can Render", "", core.rgb(255, 140, 0), S.first)
     T.bis1State = instance:addStream("bis1_state", core.Line, "BIS1 State (1=up,-1=down,0=idle)", "", core.rgb(46, 139, 87), S.first)
     T.bis2State = instance:addStream("bis2_state", core.Line, "BIS2 State (1=up,-1=down,0=idle)", "", core.rgb(30, 144, 255), S.first)
+    T.prev2230High = instance:addStream("prev2230_high", core.Line, "Prev 22:30 Box High", "", instance.parameters.prev2230color, S.first)
+    T.prev2230Low = instance:addStream("prev2230_low", core.Line, "Prev 22:30 Box Low", "", instance.parameters.prev2230color, S.first)
+    T.prev2230HighBand = addInternalBandStream("prev2230_high_band", "Prev 22:30 High Band", S.first, instance.parameters.prev2230color)
+    T.prev2230LowBand = addInternalBandStream("prev2230_low_band", "Prev 22:30 Low Band", S.first, instance.parameters.prev2230color)
+    T.prev2230Mid = instance:addStream("prev2230_mid", core.Line, "Prev 22:30 Box Mid", "", instance.parameters.prev2230color, S.first)
+    T.londonHigh = instance:addStream("london_high", core.Line, "London Box High", "", instance.parameters.londoncolor, S.first)
+    T.londonLow = instance:addStream("london_low", core.Line, "London Box Low", "", instance.parameters.londoncolor, S.first)
+    T.londonHighBand = addInternalBandStream("london_high_band", "London High Band", S.first, instance.parameters.londoncolor)
+    T.londonLowBand = addInternalBandStream("london_low_band", "London Low Band", S.first, instance.parameters.londoncolor)
+    T.londonMid = instance:addStream("london_mid", core.Line, "London Box Mid", "", instance.parameters.londoncolor, S.first)
 
     O.txtConsolidation = instance:createTextOutput("", "SB_CONSOLIDATION", "Arial", 8, core.H_Center, core.V_Top, core.rgb(210, 210, 210), 0)
     local bisAlign = resolveHorizontalAlign(instance.parameters.bislabelalign)
@@ -764,6 +844,8 @@ function Prepare(nameOnly)
     O.txtBisDown = instance:createTextOutput("", "SB_BIS_DOWN", "Arial", bisFontSize, bisAlign, core.V_Top, core.rgb(220, 20, 60), 0)
     O.txtSessionHigh = instance:createTextOutput("", "SB_SESSION_HIGH", "Arial", 8, core.H_Center, core.V_Bottom, core.rgb(255, 215, 0), 0)
     O.txtSessionLow = instance:createTextOutput("", "SB_SESSION_LOW", "Arial", 8, core.H_Center, core.V_Top, core.rgb(135, 206, 250), 0)
+    O.txtPrev2230Box = instance:createTextOutput("", "SB_PREV2230_BOX", "Arial", 8, core.H_Left, core.V_Bottom, instance.parameters.prev2230color, 0)
+    O.txtLondonBox = instance:createTextOutput("", "SB_LONDON_BOX", "Arial", 8, core.H_Left, core.V_Bottom, instance.parameters.londoncolor, 0)
     O.txtGateWait = instance:createTextOutput("", "SB_GATE_WAIT", "Arial", 8, core.H_Right, core.V_Top, core.rgb(255, 165, 0), 0)
     O.txtDebug = instance:createTextOutput("", "SB_STRUCTURE_DEBUG", "Arial", 7, core.H_Left, core.V_Top, core.rgb(180, 180, 180), 0)
 
@@ -772,6 +854,10 @@ function Prepare(nameOnly)
     bindChannelGroup(O.consolidationChannel, T.consolidationHighBand, T.consolidationLowBand)
     O.sessionChannel = createChannelGroup("SB_SESSION_CHANNEL", S.state.display.session.color, S.state.display.session.fillAlpha)
     bindChannelGroup(O.sessionChannel, T.sessionHigh, T.sessionLow)
+    O.prev2230Channel = createChannelGroup("SB_PREV2230_CHANNEL", instance.parameters.prev2230color, instance.parameters.prev2230fillalpha)
+    bindChannelGroup(O.prev2230Channel, T.prev2230HighBand, T.prev2230LowBand)
+    O.londonChannel = createChannelGroup("SB_LONDON_CHANNEL", instance.parameters.londoncolor, instance.parameters.londonfillalpha)
+    bindChannelGroup(O.londonChannel, T.londonHighBand, T.londonLowBand)
 end
 
 function Update(period, mode)
