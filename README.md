@@ -48,12 +48,12 @@
 
 ### FRD trade-day candidate
 同時滿足：
-- 前一交易日 `is_frd_event_day = true`
+- 前一「有效交易日」`is_frd_event_day = true`（週六/週日不計入）
 - 本日僅標記候選，等待下游 Entry consume
 
 ### FGD trade-day candidate
 同時滿足：
-- 前一交易日 `is_fgd_event_day = true`
+- 前一「有效交易日」`is_fgd_event_day = true`（週六/週日不計入）
 - 本日僅標記候選，等待下游 Entry consume
 
 ## 3) consolidation rectangle（程式化定義）
@@ -241,7 +241,12 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
    - 直接對照本檔第 2~7 章
    - 每層「該做/不該做」皆已列出
 
-5. **Structure gate 故障排查（upstream 擋住）**
+
+5. **Friday event -> Monday trade day（忽略週末）**
+   - 建立週五 FRD/FGD event，並確認週末存在或不存在 D1 列時都不影響映射。
+   - 預期下個 trade-day 標記落在週一（或下一個有效交易日），不可落在週六/週日。
+
+6. **Structure gate 故障排查（upstream 擋住）**
    - 在 `SB_Structure_Engine.lua` 先看 stream `can_render_structure` 是否為 `0`
    - 若為 `0`，再看 `gate_upstream_trade_day` 是否有值（nil/空值通常代表 upstream DayType 未接線）
    - 同步看 `gate_require_trade_day` 與 `gate_final_can_render`，快速定位是「require gate」還是「upstream 缺失」造成阻擋

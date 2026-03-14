@@ -109,6 +109,28 @@ function M.find_history_index_by_time(history, ts, cache)
     return i
 end
 
+
+function M.is_weekend_timestamp(ts)
+    if ts == nil or core == nil or type(core.dateToTable) ~= "function" then return false end
+    local ok, t = pcall(core.dateToTable, ts)
+    if not ok or type(t) ~= "table" then return false end
+    return t.wday == 1 or t.wday == 7
+end
+
+function M.find_prev_effective_trading_day_idx(d1, day_idx)
+    if d1 == nil or day_idx == nil then return nil end
+    local first = d1:first()
+    local idx = day_idx - 1
+    while idx >= first do
+        local ts = d1:date(idx)
+        if ts ~= nil and not M.is_weekend_timestamp(ts) then
+            return idx
+        end
+        idx = idx - 1
+    end
+    return nil
+end
+
 function M.calc_atr(history, idx, len)
     if history == nil or idx == nil or len == nil or len <= 0 then return nil end
     local start = idx - len + 1
@@ -245,15 +267,16 @@ function M.build_daytype_record(d1, m15, day_idx, params, day_cache, runtime_cac
     local p = params or {}
     local rect = M.eval_rectangle(d1, m15, day_idx, p, runtime_cache and runtime_cache.rectangle)
 
-    local prevBase = M.evaluate_daytype(d1, day_idx - 1)
+    local prev_idx = M.find_prev_effective_trading_day_idx(d1, day_idx)
+    local prevBase = prev_idx ~= nil and M.evaluate_daytype(d1, prev_idx) or nil
     local todayOpen, todayClose = d1.open[day_idx], d1.close[day_idx]
     -- Phase-1 SSOT: rectangle stays debug/output only, not a hard event gate.
     local isFrdEvent = prevBase ~= nil and prevBase.is_pump_day and todayClose < todayOpen
     local isFgdEvent = prevBase ~= nil and prevBase.is_dump_day and todayClose > todayOpen
 
-    local prev = cache[day_idx - 1]
-    if prev == nil and day_idx - 1 >= d1:first() then
-        prev = M.build_daytype_record(d1, m15, day_idx - 1, p, cache, runtime_cache)
+    local prev = prev_idx ~= nil and cache[prev_idx] or nil
+    if prev == nil and prev_idx ~= nil and prev_idx >= d1:first() then
+        prev = M.build_daytype_record(d1, m15, prev_idx, p, cache, runtime_cache)
     end
     local isFrdTradeCandidate = prev ~= nil and prev.is_frd_event_day
     local isFgdTradeCandidate = prev ~= nil and prev.is_fgd_event_day
