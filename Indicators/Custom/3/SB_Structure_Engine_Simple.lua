@@ -43,55 +43,30 @@ local S = {
             consEndBar = nil,
             consHigh = nil,
             consLow = nil
-        },
-        gate = {
-            hasUpstream = false,
-            upstreamTradeDay = nil
         }
     }
+}
+
+local U = {
+    tradeDay = nil,
+    frd = nil,
+    fgd = nil,
+    bias = nil
 }
 
 local T = {}
 local O = {}
 
 local PROFILE_PRESETS = {
-    default = {
-        consolidationminbars = 8,
-        consolidationstalebars = 3,
-        atrlen = 14,
-        maxconsolidationatrmult = 1.0,
-        maxdriftratio = 0.45
-    },
-    tight = {
-        consolidationminbars = 10,
-        consolidationstalebars = 4,
-        atrlen = 21,
-        maxconsolidationatrmult = 0.8,
-        maxdriftratio = 0.30
-    },
-    loose = {
-        consolidationminbars = 6,
-        consolidationstalebars = 2,
-        atrlen = 10,
-        maxconsolidationatrmult = 1.2,
-        maxdriftratio = 0.60
-    }
+    default = { consolidationminbars = 8, consolidationstalebars = 3, atrlen = 14, maxconsolidationatrmult = 1.0, maxdriftratio = 0.45 },
+    tight = { consolidationminbars = 10, consolidationstalebars = 4, atrlen = 21, maxconsolidationatrmult = 0.8, maxdriftratio = 0.30 },
+    loose = { consolidationminbars = 6, consolidationstalebars = 2, atrlen = 10, maxconsolidationatrmult = 1.2, maxdriftratio = 0.60 }
 }
 
 local function resolveProfileName(rawProfile)
     local value = string.lower(tostring(rawProfile or "default"))
     if PROFILE_PRESETS[value] ~= nil then return value end
     return "default"
-end
-
-local function debugLog(msg)
-    if not instance.parameters.debug then return end
-    local ok = pcall(function()
-        core.host:trace("[SB_Structure_Engine] " .. msg)
-    end)
-    if not ok then
-        pcall(function() print("[SB_Structure_Engine] " .. msg) end)
-    end
 end
 
 local function safeTextSet(out, period, price, text)
@@ -118,6 +93,18 @@ local function clearEvents(ev)
     ev.bisFired = nil
     ev.sessionHighUpdated = nil
     ev.sessionLowUpdated = nil
+end
+
+local function isReadableStream(v)
+    if v == nil or type(v) ~= "userdata" then return false end
+    return type(v.first) == "function" and type(v.name) == "function"
+end
+
+local function streamValue(stream, period)
+    if not isReadableStream(stream) or period == nil then return nil end
+    local first = stream:first()
+    if first == nil or period < first then return nil end
+    return stream[period]
 end
 
 local function computeATR(stream, period, len)
@@ -163,10 +150,7 @@ local function findConsolidationCandidate(stream, period, minBars, atrLen, maxAt
         high = high,
         low = low,
         startBar = start,
-        endBar = period,
-        bars = minBars,
-        atr = atr,
-        range = range
+        endBar = period
     }
 end
 
@@ -182,14 +166,7 @@ local function detectConsolidation(period, canRender)
         return
     end
 
-    local params
-    if instance.parameters.simplemode then
-        local profileName = resolveProfileName(instance.parameters.profile)
-        params = PROFILE_PRESETS[profileName] or PROFILE_PRESETS.default
-    else
-        params = instance.parameters
-    end
-
+    local params = PROFILE_PRESETS[resolveProfileName(instance.parameters.profile)] or PROFILE_PRESETS.default
     local minBars = math.max(3, params.consolidationminbars)
     local staleBars = math.max(1, params.consolidationstalebars)
     local atrLen = math.max(2, params.atrlen)
@@ -209,7 +186,7 @@ local function detectConsolidation(period, canRender)
         elseif brokeUp then
             if canFireBis and ev.lastBisConsolidationId ~= con.id then
                 con.active = false
-                ev.bisFired = { id = con.id, bar = period, price = src.high[period], sourceHigh = con.high, dir = "up" }
+                ev.bisFired = { id = con.id, bar = period, price = src.high[period], dir = "up" }
                 ev.lastBisConsolidationId = con.id
             else
                 con.active = false
@@ -218,7 +195,7 @@ local function detectConsolidation(period, canRender)
             if canFireBis and ev.lastBisConsolidationId ~= con.id then
                 con.brokenDown = true
                 con.active = false
-                ev.bisFired = { id = con.id, bar = period, price = src.low[period], sourceLow = con.low, dir = "down" }
+                ev.bisFired = { id = con.id, bar = period, price = src.low[period], dir = "down" }
                 ev.lastBisConsolidationId = con.id
             else
                 con.active = false
@@ -292,15 +269,14 @@ end
 local function render(period, canRender)
     local src = S.source
     local st = S.state
-    local con = st.consolidation
     local sess = st.session
     local ev = st.events
     local disp = st.display
-    local bias = st.day.bias or 0
+
     local dayMode = "neutral"
-    if bias < 0 or st.day.isFrd then
+    if st.day.bias < 0 or st.day.isFrd then
         dayMode = "frd"
-    elseif bias > 0 or st.day.isFgd then
+    elseif st.day.bias > 0 or st.day.isFgd then
         dayMode = "fgd"
     end
 
@@ -308,21 +284,11 @@ local function render(period, canRender)
     T.consolidationLow[period] = nil
     T.sessionHigh[period] = nil
     T.sessionLow[period] = nil
-    T.canRenderStructure[period] = canRender and 1 or 0
-    T.gateRequireTradeDay[period] = instance.parameters.requiretradeday and 1 or 0
-    T.gateUpstreamTradeDay[period] = st.gate.upstreamTradeDay
-    T.gateTradeDaySemantic[period] = st.day.isTradeDay and 1 or 0
-    T.gateRenderReasonCode[period] = canRender and 1 or 0
-    T.gateFinalCanRender[period] = canRender and 1 or 0
+
+    if not canRender then return end
 
     local range = src.high[period] - src.low[period]
     local offset = range > 0 and range * 0.2 or src:pipSize() * 8
-
-    if not canRender then
-        T.gateRenderReasonCode[period] = 0
-        safeTextSet(O.txtGateWait, period, src.high[period] + offset, "WAIT_UPSTREAM_TRADE_DAY")
-        return
-    end
 
     if ev.consolidationCreated ~= nil then
         if disp.setupId ~= ev.consolidationCreated.id then
@@ -363,47 +329,35 @@ local function render(period, canRender)
     end
 
     if dayMode == "frd" and ev.sessionHighUpdated ~= nil and not disp.targetShown then
-        safeTextSet(O.txtSessionHigh, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "HOS/HOD ✓")
+        safeTextSet(O.txtTarget, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "HOS/HOD ✓")
         disp.targetShown = true
-    end
-
-    if dayMode == "fgd" and ev.sessionLowUpdated ~= nil and not disp.targetShown then
-        safeTextSet(O.txtSessionLow, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "LOS/LOD ✓")
+    elseif dayMode == "fgd" and ev.sessionLowUpdated ~= nil and not disp.targetShown then
+        safeTextSet(O.txtTarget, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "LOS/LOD ✓")
         disp.targetShown = true
-    end
-
-    if false and instance.parameters.debug then
-        local debugText = "DBG con=" .. (con.active and "1" or "0") ..
-            " id=" .. (con.id or 0) ..
-            " low=" .. string.format("%.5f", con.low or 0) ..
-            " bisSrc=" .. (st.events.lastBisConsolidationId or 0)
-        safeTextSet(O.txtDebug, period, src.low[period] - offset * 2, debugText)
     end
 end
 
 function Init()
-    indicator:name("SB Structure Engine (Engineering)")
-    indicator:description("SB Structure Engine Engineering/Debug (Consolidation -> BIS -> Session High/Low)")
+    indicator:name("SB Structure Engine (Simple)")
+    indicator:description("Simple Structure output: Consolidation -> BIS -> Session High/Low")
     indicator:requiredSource(core.Bar)
     indicator:type(core.Indicator)
 
-    indicator.parameters:addBoolean("simplemode", "Simple Mode", "", true)
-    indicator.parameters:addString("profile", "Simple Profile", "", "Default")
+    indicator.parameters:addString("profile", "Profile", "", "Default")
     indicator.parameters:addStringAlternative("Default", "Default", "")
     indicator.parameters:addStringAlternative("Tight", "Tight", "")
     indicator.parameters:addStringAlternative("Loose", "Loose", "")
 
-    indicator.parameters:addInteger("consolidationminbars", "Consolidation Min Bars", "", 8)
-    indicator.parameters:addInteger("consolidationstalebars", "Consolidation Stale Bars", "", 3)
-    indicator.parameters:addInteger("atrlen", "ATR Length", "", 14)
-    indicator.parameters:addDouble("maxconsolidationatrmult", "Max Consolidation Range ATR Mult", "", 1.0)
-    indicator.parameters:addDouble("maxdriftratio", "Max Consolidation Drift Ratio", "", 0.45)
-
     indicator.parameters:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
-    indicator.parameters:addBoolean("istradeday", "Is Trade Day", "", true)
-    indicator.parameters:addInteger("daymode", "Day Mode (-1=FRD, 1=FGD)", "", -1)
+    indicator.parameters:addBoolean("fallbackistradeday", "Fallback Is Trade Day", "", true)
+    indicator.parameters:addInteger("fallbackdaymode", "Fallback Day Mode (-1=FRD, 1=FGD)", "", -1)
 
-    indicator.parameters:addBoolean("debug", "Debug", "", false)
+    if indicator.parameters.addSource ~= nil then
+        indicator.parameters:addSource("daytype_trade_day_stream", "DayType is_trade_day stream", "")
+        indicator.parameters:addSource("daytype_frd_event_stream", "DayType is_frd_event_day stream", "")
+        indicator.parameters:addSource("daytype_fgd_event_stream", "DayType is_fgd_event_day stream", "")
+        indicator.parameters:addSource("daytype_bias_stream", "DayType day_bias stream", "")
+    end
 end
 
 function Prepare(nameOnly)
@@ -413,23 +367,19 @@ function Prepare(nameOnly)
     instance:name(profile:id() .. "(" .. S.source:name() .. ")")
     if nameOnly then return end
 
+    U.tradeDay = instance.parameters.daytype_trade_day_stream
+    U.frd = instance.parameters.daytype_frd_event_stream
+    U.fgd = instance.parameters.daytype_fgd_event_stream
+    U.bias = instance.parameters.daytype_bias_stream
+
     T.consolidationHigh = instance:addStream("consolidation_high", core.Line, "Consolidation High", "", core.rgb(205, 205, 205), S.first)
     T.consolidationLow = instance:addStream("consolidation_low", core.Line, "Consolidation Low", "", core.rgb(205, 205, 205), S.first)
     T.sessionHigh = instance:addStream("session_high", core.Line, "Session High", "", core.rgb(255, 215, 0), S.first)
     T.sessionLow = instance:addStream("session_low", core.Line, "Session Low", "", core.rgb(135, 206, 250), S.first)
-    T.canRenderStructure = instance:addStream("can_render_structure", core.Line, "Can Render Structure", "", core.rgb(169, 169, 169), S.first)
-    T.gateRequireTradeDay = instance:addStream("gate_require_trade_day", core.Line, "Gate Require Trade Day", "", core.rgb(112, 128, 144), S.first)
-    T.gateUpstreamTradeDay = instance:addStream("gate_upstream_trade_day", core.Line, "Gate Upstream Trade Day", "", core.rgb(143, 188, 143), S.first)
-    T.gateTradeDaySemantic = instance:addStream("gate_trade_day_semantic", core.Line, "Gate Semantic is_trade_day", "", core.rgb(100, 149, 237), S.first)
-    T.gateRenderReasonCode = instance:addStream("gate_render_reason_code", core.Line, "Gate Render Reason (1=render,0=blocked)", "", core.rgb(255, 99, 71), S.first)
-    T.gateFinalCanRender = instance:addStream("gate_final_can_render", core.Line, "Gate Final Can Render", "", core.rgb(255, 140, 0), S.first)
 
     O.txtConsolidation = instance:createTextOutput("", "SB_CONSOLIDATION", "Arial", 8, core.H_Center, core.V_Top, core.rgb(210, 210, 210), 0)
     O.txtBis = instance:createTextOutput("", "SB_BIS", "Arial", 9, core.H_Center, core.V_Top, core.rgb(220, 20, 60), 0)
-    O.txtSessionHigh = instance:createTextOutput("", "SB_SESSION_HIGH", "Arial", 8, core.H_Center, core.V_Bottom, core.rgb(255, 215, 0), 0)
-    O.txtSessionLow = instance:createTextOutput("", "SB_SESSION_LOW", "Arial", 8, core.H_Center, core.V_Top, core.rgb(135, 206, 250), 0)
-    O.txtGateWait = instance:createTextOutput("", "SB_GATE_WAIT", "Arial", 8, core.H_Right, core.V_Top, core.rgb(255, 165, 0), 0)
-    O.txtDebug = instance:createTextOutput("", "SB_STRUCTURE_DEBUG", "Arial", 7, core.H_Left, core.V_Top, core.rgb(180, 180, 180), 0)
+    O.txtTarget = instance:createTextOutput("", "SB_TARGET", "Arial", 8, core.H_Center, core.V_Top, core.rgb(255, 215, 0), 0)
 end
 
 function Update(period, mode)
@@ -438,18 +388,31 @@ function Update(period, mode)
     local st = S.state
     clearEvents(st.events)
 
-    local gate = st.gate
+    local streamTrade = streamValue(U.tradeDay, period)
+    local streamFrd = streamValue(U.frd, period)
+    local streamFgd = streamValue(U.fgd, period)
+    local streamBias = streamValue(U.bias, period)
 
-    st.day.isTradeDay = instance.parameters.istradeday
-    st.day.bias = instance.parameters.daymode
-    st.day.isFrd = st.day.bias < 0
-    st.day.isFgd = st.day.bias > 0
-    gate.hasUpstream = false
-    gate.upstreamTradeDay = st.day.isTradeDay and 1 or 0
+    if streamTrade ~= nil then
+        st.day.isTradeDay = streamTrade > 0
+    else
+        st.day.isTradeDay = instance.parameters.fallbackistradeday
+    end
 
-    local canRenderStructure =
-        (not instance.parameters.requiretradeday) or
-        st.day.isTradeDay
+    if streamFrd ~= nil then st.day.isFrd = streamFrd > 0 else st.day.isFrd = false end
+    if streamFgd ~= nil then st.day.isFgd = streamFgd > 0 else st.day.isFgd = false end
+
+    if streamBias ~= nil then
+        st.day.bias = streamBias
+    elseif st.day.isFrd then
+        st.day.bias = -1
+    elseif st.day.isFgd then
+        st.day.bias = 1
+    else
+        st.day.bias = instance.parameters.fallbackdaymode
+    end
+
+    local canRenderStructure = (not instance.parameters.requiretradeday) or st.day.isTradeDay
 
     detectConsolidation(period, canRenderStructure)
     updateSession(period, canRenderStructure)

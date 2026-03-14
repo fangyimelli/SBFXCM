@@ -1,5 +1,11 @@
 # 10-change-log
 
+## 2026-03-14
+- 新增 `Indicators/Custom/3/SB_Structure_Engine_Simple.lua` 作為 Simple 入口：僅暴露少量參數（`profile` + trade-day gate/fallback），正式輸出維持 `Consolidation`、`BIS`、`Session High/Low`。
+- Simple 版 upstream 策略固定為「優先讀 DayType stream，stream 不可用時自動 fallback」，不要求手動填 upstream*。
+- `Indicators/Custom/3/SB_Structure_Engine.lua` 保留為 Engineering/Debug 入口，維持完整參數供診斷與平台相容驗證。
+- README 載入指引改為「一般使用者先用 Simple、診斷才用 Engineering」，並明確寫入責任邊界：debug 參數不得回加到 Simple 版。
+
 
 ## 2026-03-14
 - `Indicators/Custom/3/SB_Structure_Engine.lua` 移除 upstream 參數與 stream 連線流程（`daytype_*_stream`、`manualoverride`、`upstream*`）。
