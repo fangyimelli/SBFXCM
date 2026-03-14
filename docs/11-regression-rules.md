@@ -71,3 +71,8 @@
    - 回歸規則：DayType 與 shared 的「前一交易日」必須略過週六/週日，統一用前一個有效交易日。
    - 驗證方式：建立週五 FRD/FGD event，檢查下一個被標記的 trade-day 是否為週一（或下一個有效交易日），並比對 `SB_DayType_FRD_FGD.lua` 與 `SB_Playbook_Shared.lua` 結果一致。
    - 預期結果：不論 D1 是否含週末列，`Trade Day` 只會出現在週一/下一個有效交易日，兩模組判定一致。
+
+14. **RG-014 | 週末 D1 列被誤判為 FRD/FGD 事件日**
+   - 回歸規則：`SB_DayType_FRD_FGD.lua` 對週六/週日列僅作為非有效交易日，禁止產生 `FRD/FGD/Trade Day` 判定與標籤。
+   - 驗證方式：使用含週末列的 FX D1 歷史，抽查週日欄位（例如 08/03）是否仍顯示 `FGD/FRD`；同時確認週一仍可基於週五作正常判定。
+   - 預期結果：週末不再出現 `FGD/FRD/Trade Day`，且週五→週一的事件/交易日鏈結維持正確。
