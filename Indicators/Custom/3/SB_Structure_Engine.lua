@@ -642,27 +642,8 @@ local function render(period, canRender, mode)
         T.consolidationLowBand[period] = nil
     end
 
-    if sess.active and sess.startBar ~= nil then
-        disp.sessionStartBar = sess.startBar
-        disp.sessionEndBar = period
-        disp.session.high = sess.high
-        disp.session.low = sess.low
-        disp.session.bands.mid = (sess.high + sess.low) / 2
-
-        local startBar = disp.sessionStartBar
-        local endBar = disp.sessionEndBar
-        for i = startBar, endBar do
-            if disp.session.showSessionHigh then
-                T.sessionHigh[i] = disp.session.high
-            end
-            if disp.session.showSessionLow then
-                T.sessionLow[i] = disp.session.low
-            end
-            if disp.session.showSessionMid then
-                T.sessionMid[i] = disp.session.bands.mid
-            end
-        end
-    end
+    -- User requirement: remove day/session high-low box rendering from Structure Engine.
+    -- Keep session state updates internally for downstream logic, but do not draw session box lines.
 
     local ts = src:date(period)
     local minute = minuteOfDay(ts)
@@ -731,15 +712,7 @@ local function render(period, canRender, mode)
     T.bis1State[period] = ev.bis1Fired ~= nil and (ev.bis1Fired.dir == "up" and 1 or -1) or T.bis1State[period]
     T.bis2State[period] = ev.bis2Fired ~= nil and (ev.bis2Fired.dir == "up" and 1 or -1) or T.bis2State[period]
 
-    if ev.sessionHighUpdated ~= nil and not disp.sessionHighShown and disp.session.showSessionLabels then
-        safeTextSet(O.txtSessionHigh, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "HOS/HOD ✓")
-        disp.sessionHighShown = true
-    end
-
-    if ev.sessionLowUpdated ~= nil and not disp.sessionLowShown and disp.session.showSessionLabels then
-        safeTextSet(O.txtSessionLow, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "LOS/LOD ✓")
-        disp.sessionLowShown = true
-    end
+    -- User requirement: remove day/session high-low labels from chart.
 
     if instance.parameters.debug and shouldRenderDebug(period, mode) then
         local reason = st.gate.bisBlockReason or st.bisBlockReason or "PASS"
@@ -818,7 +791,7 @@ function Init()
     p:addStringAlternative("bislabelalign", "Left", "Left", "")
     p:addStringAlternative("bislabelalign", "Center", "Center", "")
     p:addStringAlternative("bislabelalign", "Right", "Right", "")
-    p:addBoolean("bisusetimewindow", "Use BIS Time Window", "", true)
+    p:addBoolean("bisusetimewindow", "Use BIS Time Window", "", false)
     p:addInteger("biswindowstartmin", "BIS Window Start Minute", "", 0)
     p:addInteger("biswindowendmin", "BIS Window End Minute", "", 570)
     p:addInteger("prevboxstartmin", "Prev Box Start Minute", "", 22 * 60)
