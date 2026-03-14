@@ -390,6 +390,7 @@ local function detectConsolidation(period, canRender)
                 end
             end
         elseif candidate ~= nil then
+            -- Allow consolidation box boundaries to resize with evolving candidate.
             con.high = candidate.high
             con.low = candidate.low
             con.lastInsideBar = period
@@ -522,11 +523,15 @@ local function render(period, canRender, mode)
         disp.consLow = con.low
     end
 
-    if con.active and disp.consHigh ~= nil and disp.consLow ~= nil then
-        T.consolidationHigh[period] = disp.consHigh
-        T.consolidationLow[period] = disp.consLow
-        T.consolidationHighBand[period] = disp.consHigh
-        T.consolidationLowBand[period] = disp.consLow
+    if con.active and disp.consHigh ~= nil and disp.consLow ~= nil and disp.consStartBar ~= nil then
+        local boxStart = disp.consStartBar
+        local boxEnd = period
+        for i = boxStart, boxEnd do
+            T.consolidationHigh[i] = disp.consHigh
+            T.consolidationLow[i] = disp.consLow
+            T.consolidationHighBand[i] = disp.consHigh
+            T.consolidationLowBand[i] = disp.consLow
+        end
     else
         T.consolidationHigh[period] = nil
         T.consolidationLow[period] = nil
