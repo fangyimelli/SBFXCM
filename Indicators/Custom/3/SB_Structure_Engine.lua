@@ -14,6 +14,8 @@ local S = {
             low = nil,
             startTs = nil,
             endTs = nil,
+            startBar = nil,
+            endBar = nil,
             isReady = false
         },
         londonBox = {
@@ -22,6 +24,8 @@ local S = {
             low = nil,
             startTs = nil,
             endTs = nil,
+            startBar = nil,
+            endBar = nil,
             isReady = false
         },
         bis1 = {
@@ -79,7 +83,9 @@ local S = {
             session = nil,
             sessionStartBar = nil,
             sessionEndBar = nil,
-            sessionMid = nil
+            sessionMid = nil,
+            prev2230LabelDayKey = nil,
+            londonLabelDayKey = nil
         },
         gate = {
             hasUpstream = false,
@@ -311,12 +317,18 @@ local function accumulateBox(box, period)
         box.low = nil
         box.startTs = nil
         box.endTs = nil
+        box.startBar = nil
+        box.endBar = nil
         box.isReady = false
     end
 
     if period.inWindow then
-        if box.startTs == nil then box.startTs = period.ts end
+        if box.startTs == nil then
+            box.startTs = period.ts
+            box.startBar = period.bar
+        end
         box.endTs = period.ts
+        box.endBar = period.bar
         if box.high == nil or period.high > box.high then box.high = period.high end
         if box.low == nil or period.low < box.low then box.low = period.low end
     elseif period.windowEnded and box.startTs ~= nil and box.high ~= nil and box.low ~= nil then
@@ -469,6 +481,7 @@ local function updateBoxesAndBis(period, canRender)
     local prevTargetDayKey = prevInWindow and (prevOwnerDayKey + 1) or key
     accumulateBox(st.prev2230Box, {
         dayKey = prevTargetDayKey,
+        bar = period,
         ts = ts,
         high = src.high[period],
         low = src.low[period],
@@ -481,6 +494,7 @@ local function updateBoxesAndBis(period, canRender)
     local londonWindowEnded = (not londonInWindow) and (londonStartMin == londonEndNorm or minute == nil or minute >= londonEndNorm)
     accumulateBox(st.londonBox, {
         dayKey = key,
+        bar = period,
         ts = ts,
         high = src.high[period],
         low = src.low[period],
@@ -669,8 +683,10 @@ local function render(period, canRender, mode)
         if instance.parameters.showboxmid then
             T.prev2230Mid[period] = (prevBox.high + prevBox.low) / 2
         end
-        if instance.parameters.showboxlabels then
-            safeTextSet(O.txtPrev2230Box, period, prevBox.high + offset, formatBoxLabel("Prev 22:30", prevBox.high, prevBox.low))
+        if instance.parameters.showboxlabels and disp.prev2230LabelDayKey ~= key then
+            local labelBar = prevBox.startBar or period
+            safeTextSet(O.txtPrev2230Box, labelBar, prevBox.high + offset, formatBoxLabel("Prev 22:30", prevBox.high, prevBox.low))
+            disp.prev2230LabelDayKey = key
         end
     end
 
@@ -690,8 +706,10 @@ local function render(period, canRender, mode)
         if instance.parameters.showboxmid then
             T.londonMid[period] = (londonBox.high + londonBox.low) / 2
         end
-        if instance.parameters.showboxlabels then
-            safeTextSet(O.txtLondonBox, period, londonBox.high + offset, formatBoxLabel("London", londonBox.high, londonBox.low))
+        if instance.parameters.showboxlabels and londonBox.isReady and disp.londonLabelDayKey ~= key then
+            local labelBar = londonBox.startBar or period
+            safeTextSet(O.txtLondonBox, labelBar, londonBox.high + offset, formatBoxLabel("London", londonBox.high, londonBox.low))
+            disp.londonLabelDayKey = key
         end
     end
 
