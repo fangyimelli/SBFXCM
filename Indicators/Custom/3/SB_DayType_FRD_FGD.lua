@@ -281,8 +281,11 @@ function GetDayTypeLabels(period, dayRecord)
     local labels = {}
     local isFrdEvent = rec.isFrd or rec.is_frd_event_day
     local isFgdEvent = rec.isFgd or rec.is_fgd_event_day
+    local showProvisionalTradeDay = rec.isActiveDay and rec.prevWasEvent
 
-    if isFgdEvent then
+    if showProvisionalTradeDay then
+        labels[#labels + 1] = "Trade Day"
+    elseif isFgdEvent then
         labels[#labels + 1] = rec.isHighQualityFgd and "FGD+" or "FGD"
     elseif isFrdEvent then
         labels[#labels + 1] = rec.isHighQualityFrd and "FRD+" or "FRD"
@@ -1146,6 +1149,8 @@ build_day_record = function(day_idx)
         prevIsPump = prevIsPump, prevIsDump = prevIsDump,
         basicFrd = basicFrd, basicFgd = basicFgd,
         qualifiedFrd = qualifiedFrd, qualifiedFgd = qualifiedFgd,
+        prevWasEvent = prevWasEvent,
+        isActiveDay = isActiveDay,
         isTradeDay = isTradeDay,
 
         reclaimRatioFrd = reclaimRatioFrd, reclaimRatioFgd = reclaimRatioFgd,
