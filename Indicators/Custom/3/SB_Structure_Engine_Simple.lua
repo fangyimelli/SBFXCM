@@ -8,6 +8,34 @@ local S = {
             isFgd = false,
             bias = 0
         },
+        prev2230Box = {
+            dayKey = nil,
+            high = nil,
+            low = nil,
+            startTs = nil,
+            endTs = nil,
+            isReady = false
+        },
+        londonBox = {
+            dayKey = nil,
+            high = nil,
+            low = nil,
+            startTs = nil,
+            endTs = nil,
+            isReady = false
+        },
+        bis1 = {
+            firedUp = false,
+            firedDown = false,
+            fireBar = nil,
+            firePrice = nil
+        },
+        bis2 = {
+            firedUp = false,
+            firedDown = false,
+            fireBar = nil,
+            firePrice = nil
+        },
         consolidation = {
             idSeed = 0,
             active = false,
@@ -196,6 +224,67 @@ local function inBisWindow(ts)
     return m >= startMin or m < endMin
 end
 
+local PREV2230_START_MIN = 22 * 60 + 30
+local PREV2230_END_MIN = 23 * 60
+local LONDON_START_MIN = 8 * 60
+local LONDON_END_MIN = 9 * 60
+
+local function dayKey(ts)
+    if ts == nil then return nil end
+    return math.floor(ts)
+end
+
+local function resetBisEvent(bis)
+    bis.firedUp = false
+    bis.firedDown = false
+    bis.fireBar = nil
+    bis.firePrice = nil
+end
+
+local function updateTimeBox(box, ts, high, low, startMin, endMin)
+    local key = dayKey(ts)
+    if key == nil then return end
+
+    if box.dayKey ~= key then
+        box.dayKey = key
+        box.high = nil
+        box.low = nil
+        box.startTs = nil
+        box.endTs = nil
+        box.isReady = false
+    end
+
+    local m = minuteOfDay(ts)
+    if m == nil then return end
+
+    local inRange = (m >= startMin and m < endMin)
+    if inRange then
+        if box.startTs == nil then box.startTs = ts end
+        box.endTs = ts
+        if box.high == nil or high > box.high then box.high = high end
+        if box.low == nil or low < box.low then box.low = low end
+    elseif m >= endMin and box.startTs ~= nil and box.high ~= nil and box.low ~= nil then
+        box.isReady = true
+    end
+end
+
+local function tryFireBisFromBox(period, ts, src, box, bis, ev, bisName)
+    if not box.isReady then return end
+    if not inBisWindow(ts) then return end
+
+    if src.close[period] > box.high and (not bis.firedUp) then
+        bis.firedUp = true
+        bis.fireBar = period
+        bis.firePrice = src.high[period]
+        ev.bisFired = { bar = period, price = bis.firePrice, dir = "up", bis = bisName, sourceHigh = box.high, dayKey = box.dayKey }
+    elseif src.close[period] < box.low and (not bis.firedDown) then
+        bis.firedDown = true
+        bis.fireBar = period
+        bis.firePrice = src.low[period]
+        ev.bisFired = { bar = period, price = bis.firePrice, dir = "down", bis = bisName, sourceLow = box.low, dayKey = box.dayKey }
+    end
+end
+
 local function resolveHorizontalAlign(align)
     local value = string.lower(tostring(align or "Center"))
     if value == "left" then return core.H_Left end
@@ -282,120 +371,36 @@ end
 
 local function detectConsolidation(period, canRender)
     local st = S.state
-    local con = st.consolidation
+    st.consolidation.active = false
+    st.debug.hasCandidate = false
+    st.debug.candidateRange = nil
+end
+
+local function updateBoxesAndBis(period, canRender)
+    local st = S.state
     local ev = st.events
     local src = S.source
-    local canFireBis = inBisWindow(src:date(period))
 
-    if not canRender then
-        con.active = false
-        return
+    if not canRender then return end
+
+    local ts = src:date(period)
+    local key = dayKey(ts)
+
+    if st.prev2230Box.dayKey ~= key then
+        resetBisEvent(st.bis1)
+    end
+    if st.londonBox.dayKey ~= key then
+        resetBisEvent(st.bis2)
     end
 
-    local params = PROFILE_PRESETS[resolveProfileName(instance.parameters.profile)] or PROFILE_PRESETS.default
-    local minBars = math.max(3, params.consolidationminbars)
-    local staleBars = math.max(1, params.consolidationstalebars)
-    local atrLen = math.max(2, params.atrlen)
-    local maxAtrMult = math.max(0.1, params.maxconsolidationatrmult)
-    local trendLimit = math.max(0.05, math.min(1.0, params.maxdriftratio))
+    updateTimeBox(st.prev2230Box, ts, src.high[period], src.low[period], PREV2230_START_MIN, PREV2230_END_MIN)
+    updateTimeBox(st.londonBox, ts, src.high[period], src.low[period], LONDON_START_MIN, LONDON_END_MIN)
 
-    local candidate = findConsolidationCandidate(src, period, minBars, atrLen, maxAtrMult, trendLimit)
-    st.debug.hasCandidate = candidate ~= nil
-    st.debug.candidateRange = candidate and (candidate.high - candidate.low) or nil
-    st.debug.minBars = minBars
-    st.debug.staleBars = staleBars
-    st.debug.atrLen = atrLen
-    st.debug.maxAtrMult = maxAtrMult
-    st.debug.trendLimit = trendLimit
-
-    local start = period - minBars + 1
-    local dbgRange = nil
-    local dbgDrift = nil
-    local dbgAtr = computeATR(src, period, atrLen)
-    if start >= src:first() then
-        local high = src.high[start]
-        local low = src.low[start]
-        for i = start + 1, period do
-            if src.high[i] > high then high = src.high[i] end
-            if src.low[i] < low then low = src.low[i] end
-        end
-        dbgRange = high - low
-        dbgDrift = math.abs(src.close[period] - src.close[start])
+    if ev.bisFired == nil then
+        tryFireBisFromBox(period, ts, src, st.prev2230Box, st.bis1, ev, "bis1")
     end
-
-    st.debug.atr = dbgAtr
-    st.debug.range = dbgRange
-    st.debug.rangeLimit = (dbgAtr ~= nil) and (dbgAtr * maxAtrMult) or nil
-    st.debug.drift = dbgDrift
-    st.debug.driftLimit = (dbgRange ~= nil) and (dbgRange * trendLimit) or nil
-
-    if con.active and not con.brokenDown then
-        local brokeUp = src.close[period] > con.high
-        local brokeDown = src.close[period] < con.low
-        local stillInside = src.high[period] <= con.high and src.low[period] >= con.low
-
-        if stillInside then
-            con.lastInsideBar = period
-            con.endBar = period
-        elseif brokeUp then
-            local repeatedInConsolidation = (not instance.parameters.bisallowrepeatinconsolidation) and ev.lastBisConsolidationId == con.id
-            if canFireBis and not repeatedInConsolidation then
-                con.active = false
-                ev.bisFired = { id = con.id, bar = period, price = src.high[period], dir = "up" }
-                ev.lastBisConsolidationId = con.id
-            else
-                con.active = false
-                if not canFireBis then
-                    st.bisBlockReason = "BIS_TIME_WINDOW"
-                elseif repeatedInConsolidation then
-                    st.bisBlockReason = "BIS_ONCE_PER_CONSOLIDATION"
-                end
-            end
-        elseif brokeDown then
-            local repeatedInConsolidation = (not instance.parameters.bisallowrepeatinconsolidation) and ev.lastBisConsolidationId == con.id
-            if canFireBis and not repeatedInConsolidation then
-                con.brokenDown = true
-                con.active = false
-                ev.bisFired = { id = con.id, bar = period, price = src.low[period], dir = "down" }
-                ev.lastBisConsolidationId = con.id
-            else
-                con.active = false
-                if not canFireBis then
-                    st.bisBlockReason = "BIS_TIME_WINDOW"
-                elseif repeatedInConsolidation then
-                    st.bisBlockReason = "BIS_ONCE_PER_CONSOLIDATION"
-                end
-            end
-        elseif candidate ~= nil then
-            -- Allow consolidation box boundaries to resize with evolving candidate.
-            con.high = candidate.high
-            con.low = candidate.low
-            con.lastInsideBar = period
-            con.endBar = period
-        elseif period - con.lastInsideBar > staleBars then
-            con.active = false
-        end
-    end
-
-    if (not con.active) and candidate ~= nil then
-        con.idSeed = con.idSeed + 1
-        con.active = true
-        con.id = con.idSeed
-        con.high = candidate.high
-        con.low = candidate.low
-        con.startBar = candidate.startBar
-        con.endBar = candidate.endBar
-        con.lastInsideBar = period
-        con.brokenDown = false
-        con.brokenUp = false
-        ev.consolidationCreated = {
-            id = con.id,
-            bar = period,
-            high = con.high,
-            low = con.low,
-            startBar = con.startBar,
-            endBar = con.endBar
-        }
+    if ev.bisFired == nil then
+        tryFireBisFromBox(period, ts, src, st.londonBox, st.bis2, ev, "bis2")
     end
 end
 
@@ -413,7 +418,7 @@ local function updateSession(period, canRender)
 
     if ev.bisFired ~= nil then
         sess.active = true
-        sess.sourceConsolidationId = ev.bisFired.id
+        sess.sourceConsolidationId = ev.bisFired.bis
         sess.startBar = period
         sess.high = src.high[period]
         sess.low = src.low[period]
@@ -692,6 +697,7 @@ function Update(period, mode)
     -- User requirement: do not gate structure rendering by trade-day semantics.
     local canRenderStructure = true
 
+    updateBoxesAndBis(period, canRenderStructure)
     detectConsolidation(period, canRenderStructure)
     updateSession(period, canRenderStructure)
     render(period, canRenderStructure, mode)
