@@ -243,6 +243,18 @@ Structure / Entry / HUD 均以 consume 為主，不再各自重建 day/event 定
 
 ---
 
+6. **shared 載入失敗排查（Entry / HUD）**
+   - `SB_Entry_Qualifier.lua` 與 `SB_Trade_Manager_HUD.lua` 都新增 `shared_load_status` 與 `shared_load_error_flag`
+   - 正常載入時：
+     - `shared_load_error_flag = 0`
+     - `shared_load_status` 會顯示 `shared loaded path=...`
+   - 載入失敗時：
+     - `shared_load_error_flag = 1`
+     - `shared_load_status` 會顯示 `shared load failed ... error=...`（保留 Lua 原始錯誤字串）
+   - 兩者會先嘗試既有路徑 `Indicators/Custom/3/SB_Playbook_Shared.lua`，再嘗試以腳本自身路徑組出的相對 fallback，降低工作目錄依賴。
+
+---
+
 ## 11) 本輪（sandbox only）FRD/FGD 全面重構重點
 
 本輪僅修改 `Indicators/Custom/3/SB_DayType_FRD_FGD.lua`，classic mode / Structure / Entry / HUD 未改。\

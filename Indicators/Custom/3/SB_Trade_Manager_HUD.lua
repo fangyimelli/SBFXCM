@@ -1,5 +1,47 @@
-local okShared, shared = pcall(dofile, "Indicators/Custom/3/SB_Playbook_Shared.lua")
-if not okShared then shared = nil end
+local shared=nil
+local shared_load_error="not_loaded"
+local shared_load_path=nil
+
+local function try_load_shared(path)
+    local ok, result = pcall(dofile, path)
+    if ok then
+        shared = result
+        shared_load_error = nil
+        shared_load_path = path
+        return true
+    end
+    shared = nil
+    shared_load_error = result
+    return false
+end
+
+local function build_shared_candidates()
+    local c={"Indicators/Custom/3/SB_Playbook_Shared.lua"}
+    local okInfo, info = pcall(debug.getinfo, 1, "S")
+    if okInfo and info and info.source and string.sub(info.source,1,1)=="@" then
+        local scriptPath=string.sub(info.source,2)
+        local normalized=string.gsub(scriptPath,"\\","/")
+        local dir=string.match(normalized,"^(.*)/")
+        if dir~=nil then
+            c[#c+1]=dir.."/SB_Playbook_Shared.lua"
+        end
+    end
+    return c
+end
+
+local function load_shared_with_fallbacks()
+    local candidates=build_shared_candidates()
+    local lastErr=nil
+    for i=1,#candidates do
+        if try_load_shared(candidates[i]) then return end
+        lastErr=shared_load_error
+    end
+    shared=nil
+    shared_load_error=lastErr or "shared load failed"
+    shared_load_path=nil
+end
+
+load_shared_with_fallbacks()
 
 local S={source=nil,first=nil,d1=nil,m15=nil,day_cache={},structure_runtime={day_key=nil,asia_high=nil,asia_low=nil}}
 local T={}
@@ -43,10 +85,28 @@ function Prepare(nameOnly)
     T.entry=instance:addStream("hud_entry_state",ST,"Entry State","",core.rgb(255,160,122),S.first)
     T.score=instance:addStream("hud_score_state",ST,"Score State","",core.rgb(144,238,144),S.first)
     T.impl=instance:addStream("hud_implementation_status",ST,"Implementation Status","",core.rgb(255,99,71),S.first)
+    T.shared_load_status=instance:addStream("shared_load_status",ST,"Shared Load Status","",core.rgb(255,255,255),S.first)
+    T.shared_error_flag=instance:addStream("shared_load_error_flag",core.Line,"Shared Load Error Flag","",core.rgb(255,0,0),S.first)
 end
 
 function Update(period, mode)
-    if shared==nil or S.source==nil or S.d1==nil or S.m15==nil or period<S.first then return end
+    if S.source==nil or period<S.first then return end
+
+    if shared==nil then
+        local loadStatus="shared load failed"
+        if shared_load_path~=nil then loadStatus=loadStatus.." path="..shared_load_path end
+        if shared_load_error~=nil then loadStatus=loadStatus.." error="..tostring(shared_load_error) end
+        writeText(T.shared_load_status, period, loadStatus, -1)
+        if T.shared_error_flag~=nil then T.shared_error_flag[period]=1 end
+        return
+    end
+
+    local okText="shared loaded"
+    if shared_load_path~=nil then okText=okText.." path="..shared_load_path end
+    writeText(T.shared_load_status, period, okText, 1)
+    if T.shared_error_flag~=nil then T.shared_error_flag[period]=0 end
+
+    if S.d1==nil or S.m15==nil then return end
 
     local ts=S.source:date(period)
     local d1idx=shared.find_history_index_by_time(S.d1, ts)
