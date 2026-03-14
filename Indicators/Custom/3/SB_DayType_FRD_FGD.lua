@@ -892,7 +892,19 @@ local function chart_date_key_for_d1_idx(day_idx)
         end
     end
 
-    return day_key(sourceDate)
+    local chartKey = day_key(sourceDate)
+    if core ~= nil and type(core.dateToTable) == "function" then
+        local ok, t = pcall(core.dateToTable, chartKey)
+        if ok and type(t) == "table" and t.wday ~= nil then
+            if t.wday == 7 then
+                chartKey = chartKey + 2
+            elseif t.wday == 1 then
+                chartKey = chartKey + 1
+            end
+        end
+    end
+
+    return chartKey
 end
 
 local function format_date_key(dateKey)
@@ -920,8 +932,8 @@ local function find_prev_effective_trading_day_idx(day_idx)
     local first = S.d1:first()
     local idx = day_idx - 1
     while idx >= first do
-        local ts = S.d1:date(idx)
-        if ts ~= nil and not is_weekend_timestamp(ts) then
+        local chartKey = chart_date_key_for_d1_idx(idx)
+        if chartKey ~= nil and not is_weekend_timestamp(chartKey) then
             return idx
         end
         idx = idx - 1
