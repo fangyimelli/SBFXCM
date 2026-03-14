@@ -38,7 +38,8 @@ local S = {
             setupId = nil,
             consShown = false,
             bisShown = false,
-            targetShown = false,
+            sessionHighShown = false,
+            sessionLowShown = false,
             consStartBar = nil,
             consEndBar = nil,
             consHigh = nil,
@@ -292,17 +293,9 @@ end
 local function render(period, canRender)
     local src = S.source
     local st = S.state
-    local con = st.consolidation
     local sess = st.session
     local ev = st.events
     local disp = st.display
-    local bias = st.day.bias or 0
-    local dayMode = "neutral"
-    if bias < 0 or st.day.isFrd then
-        dayMode = "frd"
-    elseif bias > 0 or st.day.isFgd then
-        dayMode = "fgd"
-    end
 
     T.consolidationHigh[period] = nil
     T.consolidationLow[period] = nil
@@ -329,7 +322,8 @@ local function render(period, canRender)
             disp.setupId = ev.consolidationCreated.id
             disp.consShown = false
             disp.bisShown = false
-            disp.targetShown = false
+            disp.sessionHighShown = false
+            disp.sessionLowShown = false
         end
         disp.consStartBar = ev.consolidationCreated.startBar
         disp.consEndBar = ev.consolidationCreated.endBar or ev.consolidationCreated.bar
@@ -353,23 +347,18 @@ local function render(period, canRender)
     end
 
     if ev.bisFired ~= nil and not disp.bisShown and inBisWindow(src:date(ev.bisFired.bar)) then
-        if dayMode == "frd" and ev.bisFired.dir == "down" then
-            safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS down ✓")
-            disp.bisShown = true
-        elseif dayMode == "fgd" and ev.bisFired.dir == "up" then
-            safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS up ✓")
-            disp.bisShown = true
-        end
+        safeTextSet(O.txtBis, ev.bisFired.bar, ev.bisFired.price - offset, "BIS " .. ev.bisFired.dir .. " ✓")
+        disp.bisShown = true
     end
 
-    if dayMode == "frd" and ev.sessionHighUpdated ~= nil and not disp.targetShown then
+    if ev.sessionHighUpdated ~= nil and not disp.sessionHighShown then
         safeTextSet(O.txtSessionHigh, ev.sessionHighUpdated.bar, ev.sessionHighUpdated.price + offset, "HOS/HOD ✓")
-        disp.targetShown = true
+        disp.sessionHighShown = true
     end
 
-    if dayMode == "fgd" and ev.sessionLowUpdated ~= nil and not disp.targetShown then
+    if ev.sessionLowUpdated ~= nil and not disp.sessionLowShown then
         safeTextSet(O.txtSessionLow, ev.sessionLowUpdated.bar, ev.sessionLowUpdated.price - offset, "LOS/LOD ✓")
-        disp.targetShown = true
+        disp.sessionLowShown = true
     end
 
     if false and instance.parameters.debug then
@@ -406,8 +395,6 @@ function Init()
 
     p:addBoolean("requiretradeday", "Require Trade Day Gate", "", true)
     p:addBoolean("istradeday", "Is Trade Day", "", true)
-    p:addInteger("daymode", "Day Mode (-1=FRD, 1=FGD)", "", -1)
-
     p:addBoolean("debug", "Debug", "", false)
 end
 
@@ -446,9 +433,9 @@ function Update(period, mode)
     local gate = st.gate
 
     st.day.isTradeDay = instance.parameters.istradeday
-    st.day.bias = instance.parameters.daymode
-    st.day.isFrd = st.day.bias < 0
-    st.day.isFgd = st.day.bias > 0
+    st.day.bias = 0
+    st.day.isFrd = false
+    st.day.isFgd = false
     gate.hasUpstream = false
     gate.upstreamTradeDay = st.day.isTradeDay and 1 or 0
 
